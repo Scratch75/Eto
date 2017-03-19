@@ -700,6 +700,19 @@ namespace Eto.Drawing
 				Handler.DrawText(font, brush, location.X, location.Y, text);
 		}
 
+		public void DrawText(Font font, SolidBrush brush, RectangleF bounds, string text)
+		{
+			// TODO
+			DrawText(font, brush, bounds.Location, text);
+		}
+
+		public void DrawText(Font font, Color color, RectangleF bounds, string text)
+		{
+			// TODO
+			using (var brush = new SolidBrush(color))
+				DrawText(font, brush, bounds, text);
+		}
+
 		/// <summary>
 		/// Measures the string with the given <paramref name="font"/>
 		/// </summary>
@@ -710,6 +723,12 @@ namespace Eto.Drawing
 		{
 			if (string.IsNullOrEmpty(text)) return SizeF.Empty; // handle null explicitly
 			return Handler.MeasureString(font, text);
+		}
+
+		public virtual SizeF MeasureString(Font font, SizeF bounds, string text)
+		{
+			// TODO: restrict text to either the width OR height of bounds (depending on which is non-zero)
+			return MeasureString(font, text);
 		}
 
 		/// <summary>
