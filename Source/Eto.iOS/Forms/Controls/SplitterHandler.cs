@@ -157,5 +157,31 @@ namespace Eto.iOS.Forms.Controls
 				
 			}
 		}
+
+		public int Panel1MinimumSize
+		{
+			get
+			{
+				return 0;
+			}
+
+			set
+			{
+				
+			}
+		}
+
+		public int Panel2MinimumSize
+		{
+			get
+			{
+				return 0;
+			}
+
+			set
+			{
+
+			}
+		}
 	}
 }
