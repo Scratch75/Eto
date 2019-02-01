@@ -2,12 +2,12 @@ Eto.Forms
 =========
 ### A cross platform desktop and mobile user interface framework
 
-[![Build status](https://ci.appveyor.com/api/projects/status/rftjjnd9lq2rxc7h/branch/develop?svg=true)](https://ci.appveyor.com/project/cwensley/eto/branch/develop)
+[![Build Status](https://dev.azure.com/curtiswensley/Eto.Forms/_apis/build/status/picoe.Eto?branchName=develop)](https://dev.azure.com/curtiswensley/Eto.Forms/_build/latest?definitionId=1&branchName=develop)
 [![forums](https://img.shields.io/badge/join-the%20forums-yellowgreen.svg)](http://groups.google.com/group/eto-forms)
 [![Gitter](https://img.shields.io/gitter/room/nwjs/nw.js.svg)](https://gitter.im/picoe/Eto)
 [![wiki](https://img.shields.io/badge/browse-the%20wiki-orange.svg)](https://github.com/picoe/Eto/wiki)
 [![NuGet](http://img.shields.io/nuget/v/Eto.Forms.svg?style=flat)](https://www.nuget.org/packages/Eto.Forms.Sample/)
-[![MyGet](http://img.shields.io/myget/eto/vpre/Eto.Forms.svg?style=flat&label=MyGet)](https://www.myget.org/F/eto/)
+[![MyGet](http://img.shields.io/myget/eto/vpre/Eto.Forms.svg?style=flat&label=MyGet)](https://www.myget.org/gallery/eto)
 
 Description
 -----------
@@ -74,12 +74,15 @@ To compile or contribute to Eto.Forms, read the [Contributing Guide](https://git
 
 Applications
 ------------
+* [MonoGame Pipeline Tool](https://github.com/MonoGame/MonoGame) - Content manager for MonoGame
 * [Manager](http://www.manager.io) - Accounting Software
 * [PabloDraw](http://picoe.ca/products/pablodraw/alpha) - Character based drawing application
 * [JabbR.Desktop](https://github.com/JabbR/JabbR.Desktop) - JabbR client
 * [Notedown](https://github.com/cwensley/Notedown) - Note taking application
-* [Eto.Test](https://github.com/picoe/Eto/tree/master/Source/Eto.Test) - Application to test the functionality of each widget
+* [Eto.Test](https://github.com/picoe/Eto/tree/master/test/Eto.Test) - Application to test the functionality of each widget
 * [DotImaging.UI](https://github.com/dajuric/dot-imaging) - Portable UI elements for DotImaging
+* [DWSIM](https://github.com/DanWBR/dwsim5) - Chemical Process Simulator
+* [Termission](https://github.com/junian/termission) - Cross-platform Serial/TCP Terminal with Scriptable Auto-Response
 
 Assemblies
 ----------
