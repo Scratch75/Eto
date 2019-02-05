@@ -311,6 +311,7 @@ namespace Eto.Mac.Forms.Controls
 				}
 				SetAttributes();
 				InvalidateMeasure();
+Control.Cell.StringValue = str.Value;
 			}
 		}
 
