@@ -257,7 +257,7 @@
   <Import Project="$(MSBuildExtensionsPath)\Xamarin\Mac\Xamarin.Mac.CSharp.targets" />
   <ItemGroup>
     <ProjectReference Include="..\Eto\Eto.csproj">
-      <Project>{35EF0A4E-2A1A-492C-8BED-106774EA09F2}</Project>
+      <Project>{1CFE67CC-3770-49CF-BE72-3B1E0DD25B3C}</Project>
       <Name>Eto</Name>
     </ProjectReference>
   </ItemGroup>
