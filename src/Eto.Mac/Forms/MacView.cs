@@ -355,6 +355,9 @@ namespace Eto.Mac.Forms
 		{
 			switch (id)
 			{
+				case Eto.Forms.Control.EnabledChangedEvent:
+					// handled manually
+					break;
 				case Eto.Forms.Control.MouseEnterEvent:
 					HandleEvent(Eto.Forms.Control.MouseLeaveEvent);
 					break;
@@ -805,8 +808,8 @@ namespace Eto.Mac.Forms
 
 		protected virtual bool ControlEnabled
 		{
-			get => Widget.Properties.Get<bool?>(MacView.ActualEnabled_Key) ?? true;
-			set => Widget.Properties.Set<bool?>(MacView.ActualEnabled_Key, value);
+			get => Widget.Properties.Get<bool>(MacView.ActualEnabled_Key, true);
+			set => Widget.Properties.Set<bool>(MacView.ActualEnabled_Key, value, true);
 		}
 
 		public bool? ShouldHaveFocus
@@ -1062,7 +1065,7 @@ namespace Eto.Mac.Forms
 
 		static void FireOnShown(Control control)
 		{
-			if (!control.Visible)
+			if (control.IsDisposed || !control.Visible)
 				return;
 
 			// don't use GetMacViewHandler() extension, as that will trigger OnShown for themed controls, which will

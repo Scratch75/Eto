@@ -44,6 +44,16 @@ namespace Eto.GtkSharp
 
 		public static Gdk.Window GetWindow(this Gtk.Widget widget)
 		{
+			if (widget is Gtk.Button b)
+			{
+				var eventWindowPtr = NativeMethods.gtk_button_get_event_window(b.Handle);
+				if (eventWindowPtr != IntPtr.Zero)
+				{
+					var window = GLib.Object.GetObject(eventWindowPtr) as Gdk.Window;
+					if (window != null)
+						return window;
+				}
+			}
 			return widget.GdkWindow;
 		}
 
@@ -134,7 +144,8 @@ namespace Eto.GtkSharp
 
 		public static Gdk.Window GetWindow(this Gtk.Widget widget)
 		{
-			return widget.Window;
+			var window = (widget as Gtk.Button)?.EventWindow;
+			return window ?? widget.Window;
 		}
 
 		public static Gtk.Requisition GetPreferredSize(this Gtk.Widget widget)
@@ -216,6 +227,14 @@ namespace Eto.GtkSharp
 		}
 
 		public static Gdk.Atom GetDataType(this Gtk.SelectionData data) => data.DataType;
+
+#if !GTKCORE
+		public static Gtk.Widget GetChildAt(this Gtk.Grid grid, int left, int top)
+		{
+			var ptr = NativeMethods.gtk_grid_get_child_at(grid.Handle, left, top);
+			return GLib.Object.GetObject(ptr) as Gtk.Widget;
+		}
+#endif
 #endif
 
 	}

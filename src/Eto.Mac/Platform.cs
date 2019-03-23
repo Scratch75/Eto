@@ -164,6 +164,10 @@ namespace Eto.Mac
 			p.Add<FilePicker.IHandler>(() => new ThemedFilePickerHandler());
 			p.Add<DocumentControl.IHandler>(() => new ThemedDocumentControlHandler());
 			p.Add<DocumentPage.IHandler>(() => new ThemedDocumentPageHandler());
+			p.Add<SegmentedButton.IHandler>(() => new SegmentedButtonHandler());
+			p.Add<ButtonSegmentedItem.IHandler>(() => new ButtonSegmentedItemHandler());
+			p.Add<MenuSegmentedItem.IHandler>(() => new MenuSegmentedItemHandler());
+			p.Add<ToggleButton.IHandler>(() => new ToggleButtonHandler());
 
 			// Forms.Menu
 			p.Add<CheckMenuItem.IHandler>(() => new CheckMenuItemHandler());
@@ -227,14 +231,14 @@ namespace Eto.Mac
 		{
 			get
 			{
-				var assembly = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
-
-				var assemblyDir = Path.GetDirectoryName(assembly.Location);
-				// location will be empty when embedded via mkbundle, ensure bundlepath is an .app bundle
-				if (string.IsNullOrEmpty(assemblyDir))
-					return NSBundle.MainBundle?.BundlePath.EndsWith(".app", StringComparison.Ordinal) == true;
-
-				return NSBundle.MainBundle != null && assembly.Location.StartsWith(NSBundle.MainBundle.BundlePath, StringComparison.Ordinal);
+				var bundle = NSBundle.MainBundle;
+				if (bundle == null)
+					return false;
+				if (!bundle.BundlePath.EndsWith(".app", StringComparison.Ordinal))
+					return false;
+				if (!bundle.IsLoaded)
+					return false;
+				return true;
 			}
 		}
 
