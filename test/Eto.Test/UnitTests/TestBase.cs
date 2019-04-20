@@ -32,7 +32,7 @@ namespace Eto.Test.UnitTests
 	}
 
 	[System.AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, Inherited = true, AllowMultiple = false)]
-	sealed class InvokeOnUIAttribute : Attribute, IWrapSetUpTearDown
+	public sealed class InvokeOnUIAttribute : Attribute, IWrapSetUpTearDown
 	{
 		public TestCommand Wrap(TestCommand command) => new RunOnUICommand(command);
 
@@ -658,6 +658,7 @@ namespace Eto.Test.UnitTests
 			T CreateControl();
 			Container CreateContainer(Control control);
 			void PopulateControl(Control control);
+			T CreatePopulatedControl();
 		}
 
 		public interface IContainerTypeInfo<out T> : IControlTypeInfo<T>
@@ -779,6 +780,13 @@ namespace Eto.Test.UnitTests
 			}
 
 			public override string ToString() => Type.Name;
+
+			public T CreatePopulatedControl()
+			{
+				var c = CreateControl();
+				PopulateControl(c);
+				return c;
+			}
 		}
 
 		public static class ContainerTypeInfo
