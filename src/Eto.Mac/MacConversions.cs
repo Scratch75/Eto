@@ -255,7 +255,19 @@ namespace Eto.Mac
 				case NSEventType.OtherMouseUp:
 				case NSEventType.OtherMouseDown:
 				case NSEventType.OtherMouseDragged:
-					buttons |= MouseButtons.Middle;
+					var buttonNumber = (int)theEvent.ButtonNumber;
+                    switch (buttonNumber)
+                    {
+						case 0:
+							buttons |= MouseButtons.Primary;
+							break;
+						case 1:
+							buttons |= MouseButtons.Alternate;
+							break;
+						case 2:
+							buttons |= MouseButtons.Middle;
+							break;
+					}
 					break;
 			}
 			return buttons;
@@ -281,7 +293,6 @@ namespace Eto.Mac
 				var mainScale = Screen.PrimaryScreen.RealScale;
 				var scales = new[] { 1f, 2f }; // generate both retina and non-retina representations
 				var sz = (float)Math.Ceiling(size.Value / mainScale);
-				var rep = nsimage.BestRepresentation(new CGRect(0, 0, sz, sz), null, null);
 				sz = size.Value;
 				var imgsize = image.Size;
 				var max = Math.Max(imgsize.Width, imgsize.Height);
@@ -291,11 +302,20 @@ namespace Eto.Mac
 				foreach (var scale in scales)
 				{
 					sz = (float)Math.Ceiling(size.Value * scale / mainScale);
-					rep = nsimage.BestRepresentation(new CGRect(0, 0, sz, sz), null, null);
+					var rep = nsimage.BestRepresentation(new CGRect(0, 0, sz, sz), null, null);
 					max = (int)Math.Max(rep.PixelsWide, rep.PixelsHigh);
 					sz = (float)Math.Ceiling(size.Value * scale);
-					var newsize = new CGSize((nint)(sz * rep.PixelsWide / max), (nint)(sz * rep.PixelsHigh / max));
-					newimage.AddRepresentation(rep.Resize(newsize, imageSize: newimagesize));
+					if (rep is NSCustomImageRep custom)
+					{
+						rep = custom.Copy() as NSImageRep;
+						rep.Size = newimagesize;
+						newimage.AddRepresentation(rep);
+					}
+					else
+					{
+						var newsize = new CGSize((nint)(sz * rep.PixelsWide / max), (nint)(sz * rep.PixelsHigh / max));
+						newimage.AddRepresentation(rep.Resize(newsize, imageSize: newimagesize));
+					}
 				}
 				nsimage = newimage;
 			}
@@ -342,19 +362,24 @@ namespace Eto.Mac
 
 		public static WindowStyle ToEtoWindowStyle(this NSWindowStyle style)
 		{
-			return style.HasFlag(NSWindowStyle.Borderless) ? WindowStyle.None : WindowStyle.Default;
+			return style.HasFlag(NSWindowStyle.Utility) 
+				? WindowStyle.Utility
+				: style.HasFlag(NSWindowStyle.Titled) 
+				? WindowStyle.Default 
+				: WindowStyle.None;
 		}
 
 		public static NSWindowStyle ToNS(this WindowStyle style, NSWindowStyle existing)
 		{
-			const NSWindowStyle NONE_STYLE = NSWindowStyle.Borderless;
-			const NSWindowStyle DEFAULT_STYLE = NSWindowStyle.Titled;
+			existing &= ~(NSWindowStyle.Utility | NSWindowStyle.Titled | NSWindowStyle.Borderless);
 			switch (style)
 			{
 				case WindowStyle.Default:
-					return (existing & ~NONE_STYLE) | DEFAULT_STYLE;
+					return existing | NSWindowStyle.Titled;
 				case WindowStyle.None:
-					return (existing & ~DEFAULT_STYLE) | NONE_STYLE;
+					return existing | NSWindowStyle.Borderless;
+				case WindowStyle.Utility:
+					return existing | NSWindowStyle.Utility | NSWindowStyle.Titled;
 				default:
 					throw new NotSupportedException();
 			}
@@ -574,6 +599,65 @@ namespace Eto.Mac
 			text = text.Replace("&", "");
 			text = text.Replace("\x01", "&");
 			return text;
+		}
+
+		public static NSCursor ToNS(this Cursor cursor) => CursorHandler.GetControl(cursor);
+
+		public static NSLineBreakMode ToNS(this FormattedTextTrimming trim)
+		{
+			switch (trim)
+			{
+				case FormattedTextTrimming.CharacterEllipsis:
+				case FormattedTextTrimming.WordEllipsis:
+					return NSLineBreakMode.TruncatingTail;
+				default:
+				case FormattedTextTrimming.None:
+					return NSLineBreakMode.Clipping;
+			}
+		}
+
+		public static NSLineBreakMode ToNS(this FormattedTextWrapMode wrap)
+		{
+			switch (wrap)
+			{
+				case FormattedTextWrapMode.Character:
+					return NSLineBreakMode.CharWrapping;
+				case FormattedTextWrapMode.Word:
+					return NSLineBreakMode.ByWordWrapping;
+				default:
+				case FormattedTextWrapMode.None:
+					return NSLineBreakMode.Clipping;
+			}
+		}
+
+		public static NSLineBreakMode ToNS(this WrapMode wrap)
+		{
+			switch (wrap)
+			{
+				case WrapMode.Character:
+					return NSLineBreakMode.CharWrapping;
+				case WrapMode.Word:
+					return NSLineBreakMode.ByWordWrapping;
+				default:
+				case WrapMode.None:
+					return NSLineBreakMode.Clipping;
+			}
+		}
+		public static NSTextAlignment ToNS(this FormattedTextAlignment align)
+		{
+			switch (align)
+			{
+				case FormattedTextAlignment.Left:
+					return NSTextAlignment.Left;
+				case FormattedTextAlignment.Center:
+					return NSTextAlignment.Center;
+				case FormattedTextAlignment.Right:
+					return NSTextAlignment.Right;
+				case FormattedTextAlignment.Justify:
+					return NSTextAlignment.Justified;
+				default:
+					throw new NotSupportedException();
+			}
 		}
 	}
 }

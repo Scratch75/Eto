@@ -7,7 +7,7 @@ using Eto.Drawing;
 
 namespace Eto.GtkSharp.Forms.Controls
 {
-	public class TreeGridViewHandler : GridHandler<TreeGridView, TreeGridView.ICallback>, TreeGridView.IHandler, ICellDataSource, IGtkListModelHandler<ITreeGridItem, ITreeGridStore<ITreeGridItem>>
+	public class TreeGridViewHandler : GridHandler<TreeGridView, TreeGridView.ICallback>, TreeGridView.IHandler, ICellDataSource, IGtkTreeModelHandler<ITreeGridItem, ITreeGridStore<ITreeGridItem>>
 	{
 		protected new TreeGridView.ICallback Callback { get { return (TreeGridView.ICallback)base.Callback; } }
 
@@ -104,8 +104,10 @@ namespace Eto.GtkSharp.Forms.Controls
 			{
 				if (collection != null)
 					collection.Unregister();
+				UnselectAll();
 				collection = new CollectionHandler { Handler = this };
 				collection.Register(value);
+				EnsureSelection();
 			}
 		}
 
@@ -643,8 +645,14 @@ namespace Eto.GtkSharp.Forms.Controls
 
 		public TreeGridViewDragInfo GetDragInfo(DragEventArgs args) => args.ControlObject as TreeGridViewDragInfo;
 
+		ITreeGridItem IGtkListModelHandler<ITreeGridItem>.GetItem(int row) => DataStore?[row];
+
 		public override IEnumerable<int> SelectedRows => Tree.Selection.GetSelectedRows().Select(GetRowIndexOfPath);
 
 		public IEnumerable<object> SelectedItems => Tree.Selection.GetSelectedRows().Select(GetItem);
+
+		protected override bool HasRows => model.IterHasChild(Gtk.TreeIter.Zero);
+
+		public int Count => DataStore?.Count ?? 0;
 	}
 }

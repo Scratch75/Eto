@@ -5,6 +5,7 @@ using Eto.Mac.Forms.Controls;
 using System.Collections.Generic;
 using Eto.Mac.Forms.Printing;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 #if XAMMAC2
 using AppKit;
@@ -50,13 +51,17 @@ namespace Eto.Mac.Forms
 		[Export("mouseMoved:")]
 		public void MouseMoved(NSEvent theEvent)
 		{
-			Handler.Callback.OnMouseMove(Handler.Widget, MacConversions.GetMouseEvent(Handler, theEvent, false));
+			var h = Handler;
+			if (h == null) return;
+			h.Callback.OnMouseMove(h.Widget, MacConversions.GetMouseEvent(h, theEvent, false));
 		}
 
 		[Export("mouseEntered:")]
 		public void MouseEntered(NSEvent theEvent)
 		{
-			Handler.Callback.OnMouseEnter(Handler.Widget, MacConversions.GetMouseEvent(Handler, theEvent, false));
+			var h = Handler;
+			if (h == null) return;
+			h.Callback.OnMouseEnter(h.Widget, MacConversions.GetMouseEvent(h, theEvent, false));
 		}
 
 		[Export("cursorUpdate:")]
@@ -67,19 +72,23 @@ namespace Eto.Mac.Forms
 		[Export("mouseExited:")]
 		public void MouseExited(NSEvent theEvent)
 		{
-			Handler.Callback.OnMouseLeave(Handler.Widget, MacConversions.GetMouseEvent(Handler, theEvent, false));
+			var h = Handler;
+			if (h == null) return;
+			h.Callback.OnMouseLeave(h.Widget, MacConversions.GetMouseEvent(h, theEvent, false));
 		}
 
 		[Export("scrollWheel:")]
 		public void ScrollWheel(NSEvent theEvent)
 		{
-			Handler.Callback.OnMouseWheel(Handler.Widget, MacConversions.GetMouseEvent(Handler, theEvent, true));
+			var h = Handler;
+			if (h == null) return;
+			h.Callback.OnMouseWheel(h.Widget, MacConversions.GetMouseEvent(h, theEvent, true));
 		}
 	}
 
 	public interface IMacViewHandler : IMacControlHandler
 	{
-		Size? PreferredSize { get; }
+		Size UserPreferredSize { get; }
 
 		Control Widget { get; }
 
@@ -87,7 +96,13 @@ namespace Eto.Mac.Forms
 
 		Cursor CurrentCursor { get; }
 
+		Color BackgroundColor { get; set; }
+
+		Dictionary<IntPtr, Command> SystemActions { get; }
+
 		void OnKeyDown(KeyEventArgs e);
+
+		void OnKeyUp(KeyEventArgs e);
 
 		void OnSizeChanged(EventArgs e);
 
@@ -102,6 +117,7 @@ namespace Eto.Mac.Forms
 		CGRect GetAlignmentFrame();
 		CGSize GetAlignmentSizeForSize(CGSize size);
 		CGPoint GetAlignmentPointForFramePoint(CGPoint point);
+		CGRect GetAlignmentRectForFrame(CGRect frame);
 	}
 
 	static class MacView
@@ -109,7 +125,7 @@ namespace Eto.Mac.Forms
 		public static readonly object AutoSize_Key = new object();
 		public static readonly object MinimumSize_Key = new object();
 		public static readonly object MaximumSize_Key = new object();
-		public static readonly object PreferredSize_Key = new object();
+		public static readonly object UserPreferredSize_Key = new object();
 		public static readonly object NaturalAvailableSize_Key = new object();
 		public static readonly object NaturalSize_Key = new object();
 		public static readonly object NaturalSizeInfinity_Key = new object();
@@ -121,7 +137,11 @@ namespace Eto.Mac.Forms
 		public static readonly IntPtr selRightMouseDown = Selector.GetHandle("rightMouseDown:");
 		public static readonly IntPtr selRightMouseUp = Selector.GetHandle("rightMouseUp:");
 		public static readonly IntPtr selRightMouseDragged = Selector.GetHandle("rightMouseDragged:");
+		public static readonly IntPtr selOtherMouseDown = Selector.GetHandle("otherMouseDown:");
+		public static readonly IntPtr selOtherMouseUp = Selector.GetHandle("otherMouseUp:");
+		public static readonly IntPtr selOtherMouseDragged = Selector.GetHandle("otherMouseDragged:");
 		public static readonly IntPtr selScrollWheel = Selector.GetHandle("scrollWheel:");
+		public static readonly IntPtr selFlagsChanged = Selector.GetHandle("flagsChanged:");
 		public static readonly IntPtr selKeyDown = Selector.GetHandle("keyDown:");
 		public static readonly IntPtr selKeyUp = Selector.GetHandle("keyUp:");
 		public static readonly IntPtr selBecomeFirstResponder = Selector.GetHandle("becomeFirstResponder");
@@ -173,6 +193,346 @@ namespace Eto.Mac.Forms
 		public static readonly Selector selSetCanDrawSubviewsIntoLayer = new Selector("setCanDrawSubviewsIntoLayer:");
 		public static readonly bool supportsCanDrawSubviewsIntoLayer = ObjCExtensions.InstancesRespondToSelector<NSView>("setCanDrawSubviewsIntoLayer:");
 		public static readonly object UseAlignmentFrame_Key = new object();
+		public static readonly IntPtr selSetDataProviderForTypes_Handle = Selector.GetHandle("setDataProvider:forTypes:");
+		public static readonly IntPtr selInitWithPasteboardWriter_Handle = Selector.GetHandle("initWithPasteboardWriter:");
+		public const string FlagsChangedEvent = "MacView.FlagsChangedEvent";
+
+		// before 10.12, we have to call base.Layout() AFTER we do our layout otherwise it doesn't work correctly..
+		// however, that causes (temporary) glitches when resizing especially with Scrollable >= 10.12
+		public static readonly bool NewLayout = MacVersion.IsAtLeast(10, 12);
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerMouseDragged_Delegate = TriggerMouseDragged;
+		static void TriggerMouseDragged(IntPtr sender, IntPtr sel, IntPtr e)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				var theEvent = Messaging.GetNSObject<NSEvent>(e);
+				var args = MacConversions.GetMouseEvent(handler, theEvent, false);
+				handler.Callback.OnMouseMove(handler.Widget, args);
+				if (!args.Handled)
+				{
+					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
+				}
+			}
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_CGSize SetFrameSize_Delegate = SetFrameSizeAction;
+		static void SetFrameSizeAction(IntPtr sender, IntPtr sel, CGSize size)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			Messaging.void_objc_msgSendSuper_SizeF(obj.SuperHandle, sel, size);
+
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				handler.OnSizeChanged(EventArgs.Empty);
+				handler.Callback.OnSizeChanged(handler.Widget, EventArgs.Empty);
+			}
+		}
+
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerMouseDown_Delegate = TriggerMouseDown;
+		static void TriggerMouseDown(IntPtr sender, IntPtr sel, IntPtr e)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				var theEvent = Messaging.GetNSObject<NSEvent>(e);
+				var args = MacConversions.GetMouseEvent(handler, theEvent, false);
+				if (theEvent.ClickCount >= 2)
+					handler.Callback.OnMouseDoubleClick(handler.Widget, args);
+
+				if (!args.Handled)
+				{
+					handler.Callback.OnMouseDown(handler.Widget, args);
+				}
+				if (!args.Handled)
+				{
+					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
+				}
+			}
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerMouseUp_Delegate = TriggerMouseUp;
+		static void TriggerMouseUp(IntPtr sender, IntPtr sel, IntPtr e)
+		{
+			var obj = Runtime.GetNSObject(sender);
+
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				var theEvent = Messaging.GetNSObject<NSEvent>(e);
+				var args = MacConversions.GetMouseEvent(handler, theEvent, false);
+				handler.Callback.OnMouseUp(handler.Widget, args);
+				if (!args.Handled)
+				{
+					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
+				}
+			}
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerMouseWheel_Delegate = TriggerMouseWheel;
+		static void TriggerMouseWheel(IntPtr sender, IntPtr sel, IntPtr e)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				var theEvent = Messaging.GetNSObject<NSEvent>(e);
+				var args = MacConversions.GetMouseEvent(handler, theEvent, true);
+				if (!args.Delta.IsZero)
+				{
+					handler.Callback.OnMouseWheel(handler.Widget, args);
+				}
+				if (!args.Handled)
+				{
+					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
+				}
+			}
+			else
+				Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerKeyDown_Delegate = TriggerKeyDown;
+		static void TriggerKeyDown(IntPtr sender, IntPtr sel, IntPtr e)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				var theEvent = Messaging.GetNSObject<NSEvent>(e);
+				if (!MacEventView.KeyDown(handler.Widget, theEvent))
+				{
+					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
+				}
+			}
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerFlagsChanged_Delegate = TriggerFlagsChanged;
+		static void TriggerFlagsChanged(IntPtr sender, IntPtr sel, IntPtr e)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				var theEvent = Messaging.GetNSObject<NSEvent>(e);
+				if (!MacEventView.FlagsChanged(handler.Widget, theEvent))
+				{
+					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
+				}
+			}
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerKeyUp_Delegate = TriggerKeyUp;
+		static void TriggerKeyUp(IntPtr sender, IntPtr sel, IntPtr e)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			var handler = MacBase.GetHandler(obj) as IMacViewHandler;
+			if (handler != null)
+			{
+				var theEvent = Messaging.GetNSObject<NSEvent>(e);
+				if (!MacEventView.KeyUp(handler.Widget, theEvent))
+				{
+					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
+				}
+			}
+		}
+
+		internal static MarshalDelegates.Func_IntPtr_IntPtr_IntPtr_bool TriggerPerformDragOperation_Delegate = TriggerPerformDragOperation;
+		static bool TriggerPerformDragOperation(IntPtr sender, IntPtr sel, IntPtr draggingInfoPtr)
+		{
+			var handler = MacBase.GetHandler(Runtime.GetNSObject(sender)) as IMacViewHandler;
+			var e = handler?.GetDragEventArgs(Runtime.GetNSObject<NSDraggingInfo>(draggingInfoPtr), null);
+			if (e != null)
+			{
+				handler.Callback.OnDragLeave(handler.Widget, e);
+				handler.Callback.OnDragDrop(handler.Widget, e);
+				return true;
+			}
+			return false;
+		}
+
+		internal static MarshalDelegates.Func_IntPtr_IntPtr_IntPtr_NSDragOperation TriggerDraggingUpdated_Delegate = TriggerDraggingUpdated;
+		static NSDragOperation TriggerDraggingUpdated(IntPtr sender, IntPtr sel, IntPtr draggingInfoPtr)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			var effect = (NSDragOperation)Messaging.IntPtr_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, draggingInfoPtr);
+			var handler = MacBase.GetHandler(Runtime.GetNSObject(sender)) as IMacViewHandler;
+			var e = handler?.GetDragEventArgs(Runtime.GetNSObject<NSDraggingInfo>(draggingInfoPtr), null);
+			if (e != null)
+			{
+
+				e.Effects = effect.ToEto();
+				handler.Callback.OnDragOver(handler.Widget, e);
+				if (e.AllowedEffects.HasFlag(e.Effects))
+					effect = e.Effects.ToNS();
+			}
+			return effect;
+		}
+
+		internal static MarshalDelegates.Func_IntPtr_IntPtr_IntPtr_NSDragOperation TriggerDraggingEntered_Delegate = TriggerDraggingEntered;
+		static NSDragOperation TriggerDraggingEntered(IntPtr sender, IntPtr sel, IntPtr draggingInfoPtr)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			var effect = (NSDragOperation)Messaging.IntPtr_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, draggingInfoPtr);
+			var handler = MacBase.GetHandler(Runtime.GetNSObject(sender)) as IMacViewHandler;
+			var draggingInfo = Runtime.GetNSObject<NSDraggingInfo>(draggingInfoPtr);
+			var e = handler?.GetDragEventArgs(draggingInfo, null);
+			if (e != null)
+			{
+				e.Effects = effect.ToEto();
+				handler.Callback.OnDragEnter(handler.Widget, e);
+				if (e.AllowedEffects.HasFlag(e.Effects))
+					effect = e.Effects.ToNS();
+			}
+			return effect;
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerDraggingExited_Delegate = TriggerDraggingExited;
+		static void TriggerDraggingExited(IntPtr sender, IntPtr sel, IntPtr draggingInfoPtr)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			var handler = MacBase.GetHandler(Runtime.GetNSObject(sender)) as IMacViewHandler;
+			var e = handler?.GetDragEventArgs(Runtime.GetNSObject<NSDraggingInfo>(draggingInfoPtr), null);
+			if (e != null)
+			{
+				handler.Callback.OnDragLeave(handler.Widget, e);
+			}
+			Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, draggingInfoPtr);
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerTextInput_Delegate = TriggerTextInput;
+		static void TriggerTextInput(IntPtr sender, IntPtr sel, IntPtr textPtr)
+		{
+			var obj = Runtime.GetNSObject(sender);
+
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				var text = (string)Messaging.GetNSObject<NSString>(textPtr);
+				var args = new TextInputEventArgs(text);
+				handler.Callback.OnTextInput(handler.Widget, args);
+				if (args.Cancel)
+					return;
+			}
+			Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, textPtr);
+		}
+
+
+		internal static MarshalDelegates.Func_IntPtr_IntPtr_bool TriggerGotFocus_Delegate = TriggerGotFocus;
+		static bool TriggerGotFocus(IntPtr sender, IntPtr sel)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				handler.ShouldHaveFocus = true;
+				var result = Messaging.bool_objc_msgSendSuper(obj.SuperHandle, sel);
+				handler.Callback.OnGotFocus(handler.Widget, EventArgs.Empty);
+				handler.ShouldHaveFocus = null;
+				return result;
+			}
+			return false;
+		}
+
+		internal static MarshalDelegates.Func_IntPtr_IntPtr_bool TriggerLostFocus_Delegate = TriggerLostFocus;
+		static bool TriggerLostFocus(IntPtr sender, IntPtr sel)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(obj) is IMacViewHandler handler)
+			{
+				handler.ShouldHaveFocus = false;
+				var result = Messaging.bool_objc_msgSendSuper(obj.SuperHandle, sel);
+				handler.Callback.OnLostFocus(handler.Widget, EventArgs.Empty);
+				handler.ShouldHaveFocus = null;
+				return result;
+			}
+			return false;
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_CGRect DrawBackgroundRect_Delegate = DrawBackgroundRect;
+		static void DrawBackgroundRect(IntPtr sender, IntPtr sel, CGRect rect)
+		{
+			var control = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(control) is IMacViewHandler handler)
+			{
+				var col = handler.BackgroundColor;
+				if (col.A > 0)
+				{
+					var context = NSGraphicsContext.CurrentContext.GraphicsPort;
+					col.ToNSUI().SetFill();
+					var bounds = handler.GetAlignmentRectForFrame(handler.ContainerControl.Bounds);
+					context.FillRect(bounds);
+				}
+			}
+			Messaging.void_objc_msgSendSuper_CGRect(control.SuperHandle, sel, rect);
+		}
+
+		static void UpdateLayerWithBackground(IntPtr sender, IntPtr sel)
+		{
+			var control = Runtime.GetNSObject<NSView>(sender);
+			if (MacBase.GetHandler(control) is IMacViewHandler handler)
+			{
+				control.Layer.BackgroundColor = handler.BackgroundColor.ToCG();
+			}
+			Messaging.void_objc_msgSendSuper(control.SuperHandle, sel);
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr TriggerResetCursorRects_Delegate = TriggerResetCursorRects;
+		static void TriggerResetCursorRects(IntPtr sender, IntPtr sel)
+		{
+			var obj = Runtime.GetNSObject(sender);
+			var handler = MacBase.GetHandler(obj) as IMacViewHandler;
+			if (handler != null)
+			{
+				var cursor = handler.CurrentCursor;
+				if (cursor != null)
+				{
+					handler.EventControl.AddCursorRect(new CGRect(CGPoint.Empty, handler.EventControl.Frame.Size), cursor.ControlObject as NSCursor);
+				}
+			}
+		}
+
+		internal static MarshalDelegates.Action_IntPtr_IntPtr_IntPtr TriggerSystemAction_Delegate = TriggerSystemAction;
+		static void TriggerSystemAction(IntPtr sender, IntPtr sel, IntPtr e)
+		{
+			var control = Runtime.GetNSObject(sender);
+			if (MacBase.GetHandler(control) is IMacViewHandler handler)
+			{
+				if (handler.SystemActions != null && handler.SystemActions.TryGetValue(sel, out var command))
+				{
+					if (command != null)
+					{
+						command.Execute();
+						return;
+					}
+				}
+			}
+			Messaging.void_objc_msgSendSuper_IntPtr(control.SuperHandle, sel, e);
+		}
+
+		internal static MarshalDelegates.Func_IntPtr_IntPtr_IntPtr_bool ValidateSystemUserInterfaceItem_Delegate = ValidateSystemUserInterfaceItem;
+		static bool ValidateSystemUserInterfaceItem(IntPtr sender, IntPtr sel, IntPtr item)
+		{
+			var actionHandle = Messaging.IntPtr_objc_msgSend(item, MacView.selGetAction);
+
+			var control = Runtime.GetNSObject(sender);
+			var handler = MacBase.GetHandler(control) as IMacViewHandler;
+			if (handler != null)
+			{
+				Command command;
+				if (handler.SystemActions != null && actionHandle != IntPtr.Zero && handler.SystemActions.TryGetValue(actionHandle, out command))
+				{
+					if (command != null)
+						return command.Enabled;
+				}
+			}
+			var objClass = ObjCExtensions.object_getClass(sender);
+
+			if (objClass == IntPtr.Zero)
+				return false;
+
+			var superClass = ObjCExtensions.class_getSuperclass(objClass);
+			return
+				superClass != IntPtr.Zero
+				&& ObjCExtensions.ClassInstancesRespondToSelector(superClass, sel)
+				&& Messaging.bool_objc_msgSendSuper_IntPtr(control.SuperHandle, sel, item);
+		}
+
 	}
 
 	public abstract class MacView<TControl, TWidget, TCallback> : MacObject<TControl, TWidget, TCallback>, Control.IHandler, IMacViewHandler
@@ -224,10 +584,14 @@ namespace Eto.Mac.Forms
 			set { Widget.Properties[MacView.MaximumSize_Key] = value; InvalidateMeasure(); }
 		}
 
-		public Size? PreferredSize
+		public Size UserPreferredSize
 		{
-			get { return Widget.Properties.Get<Size?>(MacView.PreferredSize_Key); }
-			set { Widget.Properties[MacView.PreferredSize_Key] = value; }
+			get => Widget.Properties.Get<Size?>(MacView.UserPreferredSize_Key) ?? new Size(-1, -1);
+			set
+			{
+				if (Widget.Properties.TrySet(MacView.UserPreferredSize_Key, value))
+					SetAutoSize();
+			}
 		}
 
 		public virtual Size Size
@@ -235,22 +599,21 @@ namespace Eto.Mac.Forms
 			get
 			{
 				if (!Widget.Loaded)
-					return PreferredSize ?? new Size(-1, -1);
+					return UserPreferredSize;
 				return GetAlignmentFrame().Size.ToEtoSize();
 			}
 			set
 			{
-				AutoSize = value.Width == -1 || value.Height == -1;
+				var preferredSize = UserPreferredSize;
+				if (preferredSize == value)
+					return;
+				UserPreferredSize = value;
+
 				if (!Widget.Loaded)
 				{
-					if (PreferredSize != value)
-					{
-						PreferredSize = value;
-						Callback.OnSizeChanged(Widget, EventArgs.Empty);
-					}
+					Callback.OnSizeChanged(Widget, EventArgs.Empty);
 					return;
 				}
-				PreferredSize = value;
 
 				var oldFrame = GetAlignmentFrame();
 				var newFrame = oldFrame;
@@ -267,6 +630,24 @@ namespace Eto.Mac.Forms
 				CreateTracking();
 				InvalidateMeasure();
 			}
+		}
+
+		public virtual int Width
+		{
+			get => Size.Width;
+			set => Size = new Size(value, UserPreferredSize.Height);
+		}
+
+		public virtual int Height
+		{
+			get => Size.Height;
+			set => Size = new Size(UserPreferredSize.Width, value);
+		}
+
+		protected virtual void SetAutoSize()
+		{
+			var userPreferredSize = UserPreferredSize;
+			AutoSize = userPreferredSize.Width == -1 || userPreferredSize.Height == -1;
 		}
 
 		protected Size? NaturalAvailableSize
@@ -316,28 +697,24 @@ namespace Eto.Mac.Forms
 		public virtual SizeF GetPreferredSize(SizeF availableSize)
 		{
 			SizeF size;
-			if (PreferredSize != null)
+			var preferredSize = UserPreferredSize;
+			// only get natural size if the size isn't explicitly set.
+			if (preferredSize.Width == -1 || preferredSize.Height == -1)
 			{
-				var preferredSize = PreferredSize.Value;
-				// only get natural size if the size isn't explicitly set.
-				if (preferredSize.Width == -1 || preferredSize.Height == -1)
-				{
-					if (preferredSize.Width >= 0)
-						availableSize.Width = preferredSize.Width;
-					if (preferredSize.Height >= 0)
-						availableSize.Height = preferredSize.Height;
-					size = GetNaturalSize(availableSize);
-				}
-				else
-					size = SizeF.Empty;
-
 				if (preferredSize.Width >= 0)
-					size.Width = preferredSize.Width;
+					availableSize.Width = preferredSize.Width;
 				if (preferredSize.Height >= 0)
-					size.Height = preferredSize.Height;
+					availableSize.Height = preferredSize.Height;
+				size = GetNaturalSize(availableSize);
 			}
 			else
-				size = GetNaturalSize(availableSize);
+				size = SizeF.Empty;
+
+			if (preferredSize.Width >= 0)
+				size.Width = preferredSize.Width;
+			if (preferredSize.Height >= 0)
+				size.Height = preferredSize.Height;
+
 			size =  SizeF.Min(SizeF.Max(size, MinimumSize), MaximumSize);
 
 			return size;
@@ -396,56 +773,64 @@ namespace Eto.Mac.Forms
 					mouseMove = true;
 					HandleEvent(Eto.Forms.Control.SizeChangedEvent);
 					CreateTracking();
-					AddMethod(MacView.selMouseDragged, new Action<IntPtr, IntPtr, IntPtr>(TriggerMouseDragged), "v@:@");
-					AddMethod(MacView.selRightMouseDragged, new Action<IntPtr, IntPtr, IntPtr>(TriggerMouseDragged), "v@:@");
+					AddMethod(MacView.selMouseDragged, MacView.TriggerMouseDragged_Delegate, "v@:@");
+					AddMethod(MacView.selRightMouseDragged, MacView.TriggerMouseDragged_Delegate, "v@:@");
+					AddMethod(MacView.selOtherMouseDragged, MacView.TriggerMouseDragged_Delegate, "v@:@");
 					break;
 				case Eto.Forms.Control.SizeChangedEvent:
-					AddMethod(MacView.selSetFrameSize, new Action<IntPtr, IntPtr, CGSize>(SetFrameSizeAction), EtoEnvironment.Is64BitProcess ? "v@:{CGSize=dd}" : "v@:{CGSize=ff}", ContainerControl);
+					AddMethod(MacView.selSetFrameSize, MacView.SetFrameSize_Delegate, EtoEnvironment.Is64BitProcess ? "v@:{CGSize=dd}" : "v@:{CGSize=ff}", ContainerControl);
 					break;
 				case Eto.Forms.Control.MouseDownEvent:
-					AddMethod(MacView.selMouseDown, new Action<IntPtr, IntPtr, IntPtr>(TriggerMouseDown), "v@:@");
-					AddMethod(MacView.selRightMouseDown, new Action<IntPtr, IntPtr, IntPtr>(TriggerMouseDown), "v@:@");
+					AddMethod(MacView.selMouseDown, MacView.TriggerMouseDown_Delegate, "v@:@");
+					AddMethod(MacView.selRightMouseDown, MacView.TriggerMouseDown_Delegate, "v@:@");
+					AddMethod(MacView.selOtherMouseDown, MacView.TriggerMouseDown_Delegate, "v@:@");
 					break;
 				case Eto.Forms.Control.MouseUpEvent:
-					AddMethod(MacView.selMouseUp, new Action<IntPtr, IntPtr, IntPtr>(TriggerMouseUp), "v@:@");
-					AddMethod(MacView.selRightMouseUp, new Action<IntPtr, IntPtr, IntPtr>(TriggerMouseUp), "v@:@");
+					AddMethod(MacView.selMouseUp, MacView.TriggerMouseUp_Delegate, "v@:@");
+					AddMethod(MacView.selRightMouseUp, MacView.TriggerMouseUp_Delegate, "v@:@");
+					AddMethod(MacView.selOtherMouseUp, MacView.TriggerMouseUp_Delegate, "v@:@");
 					break;
 				case Eto.Forms.Control.MouseDoubleClickEvent:
 					HandleEvent(Eto.Forms.Control.MouseDownEvent);
 					break;
 				case Eto.Forms.Control.MouseWheelEvent:
-					AddMethod(MacView.selScrollWheel, new Action<IntPtr, IntPtr, IntPtr>(TriggerMouseWheel), "v@:@");
+					AddMethod(MacView.selScrollWheel, MacView.TriggerMouseWheel_Delegate, "v@:@");
 					break;
 				case Eto.Forms.Control.KeyDownEvent:
-					AddMethod(MacView.selKeyDown, new Action<IntPtr, IntPtr, IntPtr>(TriggerKeyDown), "v@:@");
+					AddMethod(MacView.selKeyDown, MacView.TriggerKeyDown_Delegate, "v@:@");
+					HandleEvent(MacView.FlagsChangedEvent);
 					break;
 				case Eto.Forms.Control.KeyUpEvent:
-					AddMethod(MacView.selKeyUp, new Action<IntPtr, IntPtr, IntPtr>(TriggerKeyUp), "v@:@");
+					AddMethod(MacView.selKeyUp, MacView.TriggerKeyUp_Delegate, "v@:@");
+					HandleEvent(MacView.FlagsChangedEvent);
+					break;
+				case MacView.FlagsChangedEvent:
+					AddMethod(MacView.selFlagsChanged, MacView.TriggerFlagsChanged_Delegate, "v@:@");
 					break;
 				case Eto.Forms.Control.LostFocusEvent:
-					AddMethod(MacView.selResignFirstResponder, new Func<IntPtr, IntPtr, bool>(TriggerLostFocus), "B@:");
+					AddMethod(MacView.selResignFirstResponder, MacView.TriggerLostFocus_Delegate, "B@:");
 					break;
 				case Eto.Forms.Control.GotFocusEvent:
-					AddMethod(MacView.selBecomeFirstResponder, new Func<IntPtr, IntPtr, bool>(TriggerGotFocus), "B@:");
+					AddMethod(MacView.selBecomeFirstResponder, MacView.TriggerGotFocus_Delegate, "B@:");
 					break;
 				case Eto.Forms.Control.ShownEvent:
 					// TODO
 					break;
 				case Eto.Forms.Control.TextInputEvent:
-					AddMethod(MacView.selInsertText, new Action<IntPtr, IntPtr, IntPtr>(TriggerTextInput), "v@:@");
+					AddMethod(MacView.selInsertText, MacView.TriggerTextInput_Delegate, "v@:@");
 					break;
 
 				case Eto.Forms.Control.DragDropEvent:
-					AddMethod(MacView.selPerformDragOperation, new Func<IntPtr, IntPtr, IntPtr, bool>(TriggerPerformDragOperation), "b@:@", DragControl);
+					AddMethod(MacView.selPerformDragOperation, MacView.TriggerPerformDragOperation_Delegate, "b@:@", DragControl);
 					break;
 				case Eto.Forms.Control.DragOverEvent:
-					AddMethod(MacView.selDraggingUpdated, new Func<IntPtr, IntPtr, IntPtr, NSDragOperation>(TriggerDraggingUpdated), "i@:@", DragControl);
+					AddMethod(MacView.selDraggingUpdated, MacView.TriggerDraggingUpdated_Delegate, "i@:@", DragControl);
 					break;
 				case Eto.Forms.Control.DragEnterEvent:
-					AddMethod(MacView.selDraggingEntered, new Func<IntPtr, IntPtr, IntPtr, NSDragOperation>(TriggerDraggingEntered), "i@:@", DragControl);
+					AddMethod(MacView.selDraggingEntered, MacView.TriggerDraggingEntered_Delegate, "i@:@", DragControl);
 					break;
 				case Eto.Forms.Control.DragLeaveEvent:
-					AddMethod(MacView.selDraggingExited, new Action<IntPtr, IntPtr, IntPtr>(TriggerDraggingExited), "v@:@", DragControl);
+					AddMethod(MacView.selDraggingExited, MacView.TriggerDraggingExited_Delegate, "v@:@", DragControl);
 					break;
 				default:
 					base.AttachEvent(id);
@@ -464,173 +849,6 @@ namespace Eto.Mac.Forms
 			if (!ContentControl.IsFlipped)
 				location.Y = ContentControl.Frame.Height - location.Y;
 			return new DragEventArgs(sourceHandler?.Widget, data, info.DraggingSourceOperationMask.ToEto(), location.ToEto(), Keyboard.Modifiers, Mouse.Buttons, customControl);
-		}
-
-		protected static bool TriggerPerformDragOperation(IntPtr sender, IntPtr sel, IntPtr draggingInfoPtr)
-		{
-			var handler = GetHandler(Runtime.GetNSObject(sender)) as IMacViewHandler;
-			var e = handler?.GetDragEventArgs(Runtime.GetNSObject<NSDraggingInfo>(draggingInfoPtr), null);
-			if (e != null)
-			{
-				handler.Callback.OnDragLeave(handler.Widget, e);
-				handler.Callback.OnDragDrop(handler.Widget, e);
-				return true;
-			}
-			return false;
-		}
-
-		protected static NSDragOperation TriggerDraggingUpdated(IntPtr sender, IntPtr sel, IntPtr draggingInfoPtr)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var effect = (NSDragOperation)Messaging.IntPtr_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, draggingInfoPtr);
-			var handler = GetHandler(Runtime.GetNSObject(sender)) as IMacViewHandler;
-			var e = handler?.GetDragEventArgs(Runtime.GetNSObject<NSDraggingInfo>(draggingInfoPtr), null);
-			if (e != null)
-			{
-				e.Effects = effect.ToEto();
-				handler.Callback.OnDragOver(handler.Widget, e);
-				if (e.AllowedEffects.HasFlag(e.Effects))
-					effect = e.Effects.ToNS();
-			}
-			return effect;
-		}
-
-
-		protected static NSDragOperation TriggerDraggingEntered(IntPtr sender, IntPtr sel, IntPtr draggingInfoPtr)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var effect = (NSDragOperation)Messaging.IntPtr_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, draggingInfoPtr);
-			var handler = GetHandler(Runtime.GetNSObject(sender)) as IMacViewHandler;
-			var e = handler?.GetDragEventArgs(Runtime.GetNSObject<NSDraggingInfo>(draggingInfoPtr), null);
-			if (e != null)
-			{
-				e.Effects = effect.ToEto();
-				handler.Callback.OnDragEnter(handler.Widget, e);
-				if (e.AllowedEffects.HasFlag(e.Effects))
-					effect = e.Effects.ToNS();
-			}
-			return effect;
-		}
-
-		protected static void TriggerDraggingExited(IntPtr sender, IntPtr sel, IntPtr draggingInfoPtr)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(Runtime.GetNSObject(sender)) as IMacViewHandler;
-			var e = handler?.GetDragEventArgs(Runtime.GetNSObject<NSDraggingInfo>(draggingInfoPtr), null);
-			if (e != null)
-			{
-				handler.Callback.OnDragLeave(handler.Widget, e);
-			}
-			Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, draggingInfoPtr);
-		}
-
-		protected static void TriggerTextInput(IntPtr sender, IntPtr sel, IntPtr textPtr)
-		{
-			var obj = Runtime.GetNSObject(sender);
-
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				var text = (string)Messaging.GetNSObject<NSString>(textPtr);
-				var args = new TextInputEventArgs(text);
-				handler.Callback.OnTextInput(handler.Widget, args);
-				if (args.Cancel)
-					return;
-			}
-			Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, textPtr);
-		}
-
-		static void SetFrameSizeAction(IntPtr sender, IntPtr sel, CGSize size)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			Messaging.void_objc_msgSendSuper_SizeF(obj.SuperHandle, sel, size);
-
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				handler.OnSizeChanged(EventArgs.Empty);
-				handler.Callback.OnSizeChanged(handler.Widget, EventArgs.Empty);
-			}
-		}
-
-		protected static bool TriggerGotFocus(IntPtr sender, IntPtr sel)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				handler.ShouldHaveFocus = true;
-				var result = Messaging.bool_objc_msgSendSuper(obj.SuperHandle, sel);
-				handler.Callback.OnGotFocus(handler.Widget, EventArgs.Empty);
-				handler.ShouldHaveFocus = null;
-				return result;
-			}
-			return false;
-		}
-
-		protected static bool TriggerLostFocus(IntPtr sender, IntPtr sel)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				handler.ShouldHaveFocus = false;
-				var result = Messaging.bool_objc_msgSendSuper(obj.SuperHandle, sel);
-				handler.Callback.OnLostFocus(handler.Widget, EventArgs.Empty);
-				handler.ShouldHaveFocus = null;
-				return result;
-			}
-			return false;
-		}
-
-		static void TriggerKeyDown(IntPtr sender, IntPtr sel, IntPtr e)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				var theEvent = Messaging.GetNSObject<NSEvent>(e);
-				if (!MacEventView.KeyDown(handler.Widget, theEvent))
-				{
-					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
-				}
-			}
-		}
-
-		static void TriggerKeyUp(IntPtr sender, IntPtr sel, IntPtr e)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				var theEvent = Messaging.GetNSObject<NSEvent>(e);
-				if (!MacEventView.KeyUp(handler.Widget, theEvent))
-				{
-					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
-				}
-			}
-		}
-
-		static void TriggerMouseDown(IntPtr sender, IntPtr sel, IntPtr e)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				var theEvent = Messaging.GetNSObject<NSEvent>(e);
-				var args = MacConversions.GetMouseEvent(handler, theEvent, false);
-				if (theEvent.ClickCount >= 2)
-					handler.Callback.OnMouseDoubleClick(handler.Widget, args);
-
-				if (!args.Handled)
-				{
-					handler.Callback.OnMouseDown(handler.Widget, args);
-				}
-				if (!args.Handled)
-				{
-					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
-				}
-			}
 		}
 
 		/// <summary>
@@ -653,62 +871,7 @@ namespace Eto.Mac.Forms
 			}
 		}
 
-
-
-		static void TriggerMouseUp(IntPtr sender, IntPtr sel, IntPtr e)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-
-			if (handler != null)
-			{
-				var theEvent = Messaging.GetNSObject<NSEvent>(e);
-				var args = MacConversions.GetMouseEvent(handler, theEvent, false);
-				handler.Callback.OnMouseUp(handler.Widget, args);
-				if (!args.Handled)
-				{
-					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
-				}
-			}
-		}
-
-		static void TriggerMouseDragged(IntPtr sender, IntPtr sel, IntPtr e)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				var theEvent = Messaging.GetNSObject<NSEvent>(e);
-				var args = MacConversions.GetMouseEvent(handler, theEvent, false);
-				handler.Callback.OnMouseMove(handler.Widget, args);
-				if (!args.Handled)
-				{
-					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
-				}
-			}
-		}
-
-		static void TriggerMouseWheel(IntPtr sender, IntPtr sel, IntPtr e)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				var theEvent = Messaging.GetNSObject<NSEvent>(e);
-				var args = MacConversions.GetMouseEvent(handler, theEvent, true);
-				if (!args.Delta.IsZero)
-				{
-					handler.Callback.OnMouseWheel(handler.Widget, args);
-				}
-				if (!args.Handled)
-				{
-					Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
-				}
-			}
-			else
-				Messaging.void_objc_msgSendSuper_IntPtr(obj.SuperHandle, sel, e);
-		}
-
+		
 		public virtual void OnSizeChanged(EventArgs e)
 		{
 			CreateTracking();
@@ -764,33 +927,6 @@ namespace Eto.Mac.Forms
 			}
 		}
 
-		static void DrawBackgroundRect(IntPtr sender, IntPtr sel, CGRect rect)
-		{
-			var control = Runtime.GetNSObject(sender);
-			if (GetHandler(control) is MacView<TControl, TWidget, TCallback> handler)
-			{
-				var col = handler.BackgroundColor;
-				if (col.A > 0)
-				{
-					var context = NSGraphicsContext.CurrentContext.GraphicsPort;
-					col.ToNSUI().SetFill();
-					var bounds = handler.GetAlignmentRectForFrame(handler.ContainerControl.Bounds);
-					context.FillRect(bounds);
-				}
-			}
-			Messaging.void_objc_msgSendSuper_CGRect(control.SuperHandle, sel, rect);
-		}
-
-		static void UpdateLayerWithBackground(IntPtr sender, IntPtr sel)
-		{
-			var control = Runtime.GetNSObject<NSView>(sender);
-			if (GetHandler(control) is MacView<TControl, TWidget, TCallback> handler)
-			{
-				control.Layer.BackgroundColor = handler.BackgroundColor.ToCG();
-			}
-			Messaging.void_objc_msgSendSuper(control.SuperHandle, sel);
-		}
-
 		bool drawRectAdded;
 
 		protected virtual bool UseNSBoxBackgroundColor => true;
@@ -812,7 +948,7 @@ namespace Eto.Mac.Forms
 				{
 					//AddMethod(MacView.selUpdateLayer, new Action<IntPtr, IntPtr>(UpdateLayerWithBackground), EtoEnvironment.Is64BitProcess ? "v@:{CGRect=dddd}" : "v@:{CGRect=ffff}", ContainerControl);
 					//ContainerControl.WantsLayer = true;
-					if (AddMethod(MacView.selDrawRect, new Action<IntPtr, IntPtr, CGRect>(DrawBackgroundRect), EtoEnvironment.Is64BitProcess ? "v@:{CGRect=dddd}" : "v@:{CGRect=ffff}", ContainerControl))
+					if (AddMethod(MacView.selDrawRect, MacView.DrawBackgroundRect_Delegate, EtoEnvironment.Is64BitProcess ? "v@:{CGRect=dddd}" : "v@:{CGRect=ffff}", ContainerControl))
 					{
 						// need this to actually use drawRect:, which is determined when the object is created
 						if (MacView.supportsCanDrawSubviewsIntoLayer)
@@ -832,7 +968,11 @@ namespace Eto.Mac.Forms
 			set => SetEnabled(ParentEnabled, value);
 		}
 
+		protected bool WantsEnabled => Widget.Properties.Get<bool?>(MacView.Enabled_Key) ?? true;
+
 		protected bool ParentEnabled => Widget.VisualParent?.Enabled != false;
+
+		public void SetEnabled() => SetEnabled(ParentEnabled);
 
 		public void SetEnabled(bool parentEnabled) => SetEnabled(parentEnabled, null);
 
@@ -887,20 +1027,6 @@ namespace Eto.Mac.Forms
 			}
 		}
 
-		static void TriggerResetCursorRects(IntPtr sender, IntPtr sel)
-		{
-			var obj = Runtime.GetNSObject(sender);
-			var handler = GetHandler(obj) as IMacViewHandler;
-			if (handler != null)
-			{
-				var cursor = handler.CurrentCursor;
-				if (cursor != null)
-				{
-					handler.EventControl.AddCursorRect(new CGRect(CGPoint.Empty, handler.EventControl.Frame.Size), cursor.ControlObject as NSCursor);
-				}
-			}
-		}
-
 		public virtual Cursor CurrentCursor
 		{
 			get { return Cursor; }
@@ -916,7 +1042,7 @@ namespace Eto.Mac.Forms
 					bool needsMethod = !Widget.Properties.ContainsKey(MacView.Cursor_Key);
 					Widget.Properties[MacView.Cursor_Key] = value;
 					if (needsMethod)
-						AddMethod(MacView.selResetCursorRects, new Action<IntPtr, IntPtr>(TriggerResetCursorRects), "v@:");
+						AddMethod(MacView.selResetCursorRects, MacView.TriggerResetCursorRects_Delegate, "v@:");
 
 					EventControl.Window?.InvalidateCursorRectsForView(EventControl);
 				}
@@ -964,10 +1090,8 @@ namespace Eto.Mac.Forms
 		{
 		}
 
-		public virtual void OnKeyDown(KeyEventArgs e)
-		{
-			Callback.OnKeyDown(Widget, e);
-		}
+		public virtual void OnKeyDown(KeyEventArgs e) => Callback.OnKeyDown(Widget, e);
+		public virtual void OnKeyUp(KeyEventArgs e) => Callback.OnKeyUp(Widget, e);
 
 		Control IMacViewHandler.Widget { get { return Widget; } }
 
@@ -978,9 +1102,10 @@ namespace Eto.Mac.Forms
 			var window = view.Window;
 			if (window != null)
 			{
-				var screen = window.Screen;
-				if (screen != null)
-					pt.Y = screen.Frame.Height - pt.Y;
+				// macOS has flipped co-ordinates starting at the bottom left of the main screen,
+				// so we flip to make 0,0 top left
+				var mainFrame = NSScreen.Screens[0].Frame;
+				pt.Y = mainFrame.Height - pt.Y;
 				pt = window.ConvertScreenToBase(pt);
 			}
 			pt = view.ConvertPointFromView(pt, null);
@@ -1002,9 +1127,10 @@ namespace Eto.Mac.Forms
 			if (window != null)
 			{
 				pt = window.ConvertBaseToScreen(pt);
-				var screen = window.Screen;
-				if (screen != null)
-					pt.Y = screen.Frame.Height - pt.Y;
+				// macOS has flipped co-ordinates starting at the bottom left of the main screen,
+				// so we flip to make 0,0 top left
+				var mainFrame = NSScreen.Screens[0].Frame;
+				pt.Y = mainFrame.Height - pt.Y;
 			}
 			return pt.ToEto();
 		}
@@ -1022,53 +1148,9 @@ namespace Eto.Mac.Forms
 			}
 		}
 
-		static void TriggerSystemAction(IntPtr sender, IntPtr sel, IntPtr e)
-		{
-			var control = Runtime.GetNSObject(sender);
-			var handler = GetHandler(control) as MacView<TControl, TWidget, TCallback>;
-			if (handler != null)
-			{
-				Command command;
-				if (handler.systemActions != null && handler.systemActions.TryGetValue(sel, out command))
-				{
-					if (command != null)
-					{
-						command.Execute();
-						return;
-					}
-				}
-			}
-			Messaging.void_objc_msgSendSuper_IntPtr(control.SuperHandle, sel, e);
-		}
-
-		static bool ValidateSystemUserInterfaceItem(IntPtr sender, IntPtr sel, IntPtr item)
-		{
-			var actionHandle = Messaging.IntPtr_objc_msgSend(item, MacView.selGetAction);
-
-			var control = Runtime.GetNSObject(sender);
-			var handler = GetHandler(control) as MacView<TControl, TWidget, TCallback>;
-			if (handler != null)
-			{
-				Command command;
-				if (handler.systemActions != null && actionHandle != IntPtr.Zero && handler.systemActions.TryGetValue(actionHandle, out command))
-				{
-					if (command != null)
-						return command.Enabled;
-				}
-			}
-			var objClass = ObjCExtensions.object_getClass(sender);
-
-			if (objClass == IntPtr.Zero)
-				return false;
-
-			var superClass = ObjCExtensions.class_getSuperclass(objClass);
-			return
-				superClass != IntPtr.Zero
-				&& ObjCExtensions.ClassInstancesRespondToSelector(superClass, sel)
-				&& Messaging.bool_objc_msgSendSuper_IntPtr(control.SuperHandle, sel, item);
-		}
-
 		Dictionary<IntPtr, Command> systemActions;
+
+		Dictionary<IntPtr, Command> IMacViewHandler.SystemActions => systemActions;
 
 		public virtual IEnumerable<string> SupportedPlatformCommands
 		{
@@ -1094,9 +1176,9 @@ namespace Eto.Mac.Forms
 				if (systemActions == null)
 				{
 					systemActions = new Dictionary<IntPtr, Command>();
-					AddMethod(MacView.selValidateUserInterfaceItem, new Func<IntPtr, IntPtr, IntPtr, bool>(ValidateSystemUserInterfaceItem), "B@:@", control);
+					AddMethod(MacView.selValidateUserInterfaceItem, MacView.ValidateSystemUserInterfaceItem_Delegate, "B@:@", control);
 				}
-				AddMethod(sel, new Action<IntPtr, IntPtr, IntPtr>(TriggerSystemAction), "v@:@", control);
+				AddMethod(sel, MacView.TriggerSystemAction_Delegate, "v@:@", control);
 				systemActions[sel] = command;
 			}
 		}
@@ -1147,19 +1229,54 @@ namespace Eto.Mac.Forms
 			}
 		}
 
-		public virtual void DoDragDrop(DataObject data, DragEffects allowedAction)
+		public virtual void DoDragDrop(DataObject data, DragEffects allowedAction, Image image, PointF origin)
 		{
 			var handler = data.Handler as IDataObjectHandler;
 
 			var source = new EtoDragSource { AllowedOperation = allowedAction.ToNS(), SourceView = ContainerControl };
 
-			var session = ContainerControl.BeginDraggingSession(new NSDraggingItem[0], NSApplication.SharedApplication.CurrentEvent, source);
+			NSDraggingItem[] draggingItems = null;
+			if (image != null)
+			{
+				var pasteboardItem = new NSPasteboardItem();
+				// item needs to have data, but we don't want to supply a standard UTI
+				const string utdragimage = "eto.dragimage";
+				pasteboardItem.SetStringForType(string.Empty, utdragimage);
+				// custom types need to be registered when using an NSPasteboardItem..
+				ContainerControl.RegisterForDraggedTypes(new string[] { utdragimage });
+#if XAMMAC2
+				var draggingItem = new NSDraggingItem(pasteboardItem);
+#else
+				var draggingItem = new NSDraggingItem(NSObjectFlag.Empty);
+				Messaging.bool_objc_msgSend_IntPtr(draggingItem.Handle, MacView.selInitWithPasteboardWriter_Handle, pasteboardItem.Handle);
+#endif
+
+				var mouseLocation = PointFromScreen(Mouse.Position);
+				var loc = mouseLocation - origin;
+				if (!ContainerControl.IsFlipped)
+					loc.Y = (float)ContainerControl.Frame.Height - loc.Y - image.Height;
+
+				draggingItem.SetDraggingFrame(new CGRect(loc.X, loc.Y, image.Width, image.Height), image.ToNS());
+
+				draggingItems = new NSDraggingItem[] { draggingItem };
+			}
+
+			if (draggingItems == null)
+				draggingItems = new NSDraggingItem[0];
+
+			var session = ContainerControl.BeginDraggingSession(draggingItems, NSApplication.SharedApplication.CurrentEvent, source);
 			handler.Apply(session.DraggingPasteboard);
 
 			// TODO: block until drag is complete?
 		}
 
-		public Window GetNativeParentWindow() => ContainerControl.Window.ToEtoWindow();
+		public Window GetNativeParentWindow()
+		{
+			var window = ContainerControl.Window;
+
+
+			return window.ToEtoWindow();
+		}
 
 		protected virtual bool DefaultUseAlignmentFrame => false;
 

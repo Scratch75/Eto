@@ -31,7 +31,16 @@ namespace Eto
 		/// <summary>
 		/// The user's documents folder
 		/// </summary>
-		Documents
+		Documents,
+
+		/// <summary>
+		/// Gets the path of the entry executable (.exe or native executable)
+		/// </summary>
+		/// <remarks>
+		/// This is used as in some cases when the application is bundled (e.g. using mkbundle),
+		/// the location of the assembly can no longer be found as it is loaded from memory.
+		/// </remarks>
+		EntryExecutable
 	}
 
 	/// <summary>
@@ -73,7 +82,7 @@ namespace Eto
 		{
 			get
 			{
-				#if PCL
+				#if NETSTANDARD
 				return IntPtr.Size == 8; // test based on size of IntPtr, which is 4 bytes in 32 bit, 8 in 64 bit.
 				#else
 				return Environment.Is64BitProcess;

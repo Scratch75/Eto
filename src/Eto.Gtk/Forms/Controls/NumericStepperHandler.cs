@@ -13,9 +13,15 @@ namespace Eto.GtkSharp.Forms.Controls
 		public NumericStepperHandler()
 		{
 			Control = new Gtk.SpinButton(double.MinValue, double.MaxValue, 1);
-			Control.WidthRequest = 120;
-			Control.Wrap = true;
+			Control.WidthChars = 5; // default to show 5 characters
 			Value = 0;
+		}
+
+		protected override void SetSize(Size size)
+		{
+			// if a width is set, we allow it to shrink as small as possible..
+			Control.WidthChars = size.Width > 0 ? 0 : 5;
+			base.SetSize(size);
 		}
 
 		static readonly object SuppressValueChanged_Key = new object();

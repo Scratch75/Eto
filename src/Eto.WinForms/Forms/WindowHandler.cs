@@ -16,6 +16,11 @@ namespace Eto.WinForms.Forms
 		swf.IWin32Window Win32Window { get; }
 	}
 
+	static class WindowHandler
+	{
+		internal static readonly object MovableByWindowBackground_Key = new object();
+	}
+
 	public abstract class WindowHandler<TControl, TWidget, TCallback> : WindowsPanel<TControl, TWidget, TCallback>, Window.IHandler, IWindowHandler
 		where TControl : swf.Form
 		where TWidget : Window
@@ -31,6 +36,12 @@ namespace Eto.WinForms.Forms
 		bool resizable;
 		bool clientWidthSet;
 		bool clientHeightSet;
+
+		public bool ShowShellDropForWindow
+		{
+			get => AllowDrop;
+			set => AllowDrop = value;
+		}
 
 		public virtual bool IsAttached => false;
 		public override swf.Control ContainerContentControl
@@ -70,6 +81,31 @@ namespace Eto.WinForms.Forms
 			}
 		}
 
+		public bool MovableByWindowBackground
+		{
+			get => Widget.Properties.Get<bool>(WindowHandler.MovableByWindowBackground_Key);
+			set
+			{
+				if (Widget.Properties.TrySet(WindowHandler.MovableByWindowBackground_Key, value))
+				{
+					if (value)
+						Widget.MouseDown += Content_MouseDown;
+					else
+						Widget.MouseDown -= Content_MouseDown;
+				}
+			}
+		}
+
+		private void Content_MouseDown(object sender, MouseEventArgs e)
+		{
+			if (e.Buttons == MouseButtons.Primary)
+			{
+				Win32.ReleaseCapture();
+				Win32.SendMessage(Control.Handle, Win32.WM.NCLBUTTONDOWN, (IntPtr)Win32.HT.CAPTION, IntPtr.Zero);
+				e.Handled = true;
+			}
+		}
+
 		protected override bool SetMinimumSize(Size size)
 		{
 			var sdsize = Size.Max(size, MinimumSize).ToSD();
@@ -85,6 +121,10 @@ namespace Eto.WinForms.Forms
 		{
 			if (IsAttached)
 				return;
+
+			// show shell drop images for the entire window
+			ShowShellDropForWindow = true;
+
 			Control.KeyPreview = !ApplicationHandler.BubbleKeyEvents;
 			Control.FormBorderStyle = DefaultWindowStyle;
 			resizable = Control.FormBorderStyle.IsResizable();
@@ -334,25 +374,6 @@ namespace Eto.WinForms.Forms
 			}
 		}
 
-		public void AddToolbar(Eto.Forms.ToolBar toolBar)
-		{
-			Control.Controls.Add((swf.Control)toolBar.ControlObject);
-		}
-
-		public void RemoveToolbar(Eto.Forms.ToolBar toolBar)
-		{
-			Control.Controls.Remove((swf.Control)toolBar.ControlObject);
-		}
-
-		public void ClearToolbars()
-		{
-			foreach (swf.Control c in Control.Controls)
-			{
-				if (c is swf.ToolBar)
-					Control.Controls.Remove(c);
-			}
-		}
-
 		public void Close()
 		{
 			Control.Close();
@@ -476,14 +497,14 @@ namespace Eto.WinForms.Forms
 
 		public override bool Visible
 		{
-			get { return base.Visible; }
+			get { return Control.Visible; }
 			set
 			{
-				if (Visible != value)
+				//if (Visible != value)
 				{
-					base.Visible = value;
-					if (Widget.Loaded && value)
-						Callback.OnShown(Widget, EventArgs.Empty);
+					Control.Visible = value;
+				//	if (Widget.Loaded && value)
+				//		Callback.OnShown(Widget, EventArgs.Empty);
 				}
 			}
 		}

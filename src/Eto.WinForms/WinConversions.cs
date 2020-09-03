@@ -501,9 +501,11 @@ namespace Eto.WinForms
 		{
 			switch (style)
 			{
+				case swf.FormBorderStyle.SizableToolWindow:
+				case swf.FormBorderStyle.FixedToolWindow:
+					return WindowStyle.Utility;
 				case swf.FormBorderStyle.Fixed3D:
 				case swf.FormBorderStyle.Sizable:
-				case swf.FormBorderStyle.SizableToolWindow:
 				case swf.FormBorderStyle.FixedDialog:
 					return WindowStyle.Default;
 				case swf.FormBorderStyle.None:
@@ -521,6 +523,8 @@ namespace Eto.WinForms
 					return resizable ? swf.FormBorderStyle.Sizable : defaultStyle;
 				case WindowStyle.None:
 					return swf.FormBorderStyle.None;
+				case WindowStyle.Utility:
+					return resizable ? swf.FormBorderStyle.SizableToolWindow : swf.FormBorderStyle.FixedToolWindow;
 				default:
 					throw new NotSupportedException();
 			}
@@ -800,7 +804,7 @@ namespace Eto.WinForms
 		}
 		public static swf.DataObject ToSwf(this DataObject data) => DataObjectHandler.GetControl(data);
 
-		public static DataObject ToEto(this swf.IDataObject data) => new DataObject(new DataObjectHandler(new swf.DataObject(data)));
+		public static DataObject ToEto(this swf.IDataObject data) => new DataObject(new DataObjectHandler(data));
 
 		public static Keys GetEtoModifiers(this swf.DragEventArgs e)
 		{
@@ -825,6 +829,8 @@ namespace Eto.WinForms
 				buttons |= MouseButtons.Middle;
 			return buttons;
 		}
+
+		public static swf.Cursor ToSwf(this Cursor cursor) => CursorHandler.GetControl(cursor);
 
 	}
 }

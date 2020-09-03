@@ -13,27 +13,20 @@ namespace Eto.Wpf.Forms
 		{
 		}
 
-		public Eto.Platform Platform { get; set; }
-
 		public PointF Position
 		{
-			get { return swf.Control.MousePosition.ScreenToLogical(); }
-			set { swf.Cursor.Position = Point.Round(value.LogicalToScreen()).ToSD(); }
+			get => swf.Control.MousePosition.ScreenToLogical();
+			set => swf.Cursor.Position = Point.Round(value.LogicalToScreen()).ToSD();
 		}
 
-		public MouseButtons Buttons
+		public static int s_CursorSetCount;
+
+		public void SetCursor(Cursor cursor)
 		{
-			get
-			{
-				MouseButtons buttons = MouseButtons.None;
-				if (swi.Mouse.LeftButton == swi.MouseButtonState.Pressed)
-					buttons |= MouseButtons.Primary;
-				if (swi.Mouse.MiddleButton == swi.MouseButtonState.Pressed)
-					buttons |= MouseButtons.Middle;
-				if (swi.Mouse.RightButton == swi.MouseButtonState.Pressed)
-					buttons |= MouseButtons.Alternate;
-				return buttons;
-			}
+			swi.Mouse.SetCursor(cursor.ToWpf());
+			s_CursorSetCount++;
 		}
+
+		public MouseButtons Buttons => swf.Control.MouseButtons.ToEto();
 	}
 }

@@ -2,6 +2,7 @@ using System;
 using Eto.Forms;
 using Eto.Drawing;
 using Eto.GtkSharp.Drawing;
+using System.Runtime.InteropServices;
 
 #if GTK2
 using IGtkCellEditable = Gtk.CellEditable;
@@ -62,17 +63,31 @@ namespace Eto.GtkSharp.Forms.Cells
 		class Renderer : Gtk.CellRenderer
 		{
 			WeakReference handler;
+			int editingRow = -1;
 
 			public CustomCellHandler Handler { get { return (CustomCellHandler)handler.Target; } set { handler = new WeakReference(value); } }
 
-			#if GTK2
-			public Renderer()
+			protected override void OnEditingStarted(IGtkCellEditable editable, string path)
 			{
-				this.EditingStarted += (o, args) => editingRow = row;
-				this.EditingCanceled += (o, args) => editingRow = -1;
-				//this.Edited += (o, args) => editingRow = -1;
+				//base.OnEditingStarted(editable, path);
+				editable.EditingDone += Editable_EditingDone;
+				editingRow = row;
 			}
-			#endif
+
+			private void Editable_EditingDone(object sender, EventArgs e)
+			{
+				editingRow = -1;
+				var editable = sender as IGtkCellEditable;
+				if (editable == null)
+					return;
+				editable.EditingDone -= Editable_EditingDone;
+			}
+
+			protected override void OnEditingCanceled()
+			{
+				//base.OnEditingCanceled();
+				editingRow = -1;
+			}
 
 			int row;
 
@@ -91,7 +106,8 @@ namespace Eto.GtkSharp.Forms.Cells
 			IGtkCellEditable CreateEditable(Gdk.Rectangle cellArea)
 			{
 				var item = Handler.Source.GetItem(Row);
-				var args = new CellEventArgs(Row, item, CellStates.Editing);
+				int column = -1;
+				var args = new CellEventArgs(null, Handler.Widget, Row, column, item, CellStates.Editing, null);
 
 				var ed = new EtoCellEditable();
 				ed.Content = Handler.Callback.OnCreateCell(Handler.Widget, args);
@@ -106,12 +122,14 @@ namespace Eto.GtkSharp.Forms.Cells
 			}
 
 
-			#if GTK2
-			int editingRow = -1;
+#if GTK2
 			public override void GetSize(Gtk.Widget widget, ref Gdk.Rectangle cell_area, out int x_offset, out int y_offset, out int width, out int height)
 			{
 				base.GetSize(widget, ref cell_area, out x_offset, out y_offset, out width, out height);
-				height = Math.Max(height, Handler.Source.RowHeight);
+				var h = Handler;
+				if (h == null)
+					return;
+				height = Math.Max(height, h.Source.RowHeight);
 			}
 
 			public override Gtk.CellEditable StartEditing(Gdk.Event evnt, Gtk.Widget widget, string path, Gdk.Rectangle background_area, Gdk.Rectangle cell_area, Gtk.CellRendererState flags)
@@ -121,39 +139,89 @@ namespace Eto.GtkSharp.Forms.Cells
 
 			protected override void Render(Gdk.Drawable window, Gtk.Widget widget, Gdk.Rectangle background_area, Gdk.Rectangle cell_area, Gdk.Rectangle expose_area, Gtk.CellRendererState flags)
 			{
+				var h = Handler;
+				if (h == null)
+					return;
+
 				if (editingRow == row)
 				{
 					return;
 				}
 				using (var graphics = new Graphics(new GraphicsHandler(widget, window)))
 				{
+					var item = h.Source.GetItem(Row);
+					var args = new CellPaintEventArgs(graphics, cell_area.ToEto(), flags.ToEto(), item);
+					h.Callback.OnPaint(h.Widget, args);
+				}
+			}
+#else
+			protected override void OnGetPreferredHeight(Gtk.Widget widget, out int minimum_size, out int natural_size)
+			{
+				base.OnGetPreferredHeight(widget, out minimum_size, out natural_size);
+				var h = Handler;
+				if (h == null)
+					return;
+				natural_size = h.Source.RowHeight;
+			}
+
+			protected override void OnGetPreferredWidth(Gtk.Widget widget, out int minimum_size, out int natural_size)
+			{
+				base.OnGetPreferredWidth(widget, out minimum_size, out natural_size);
+				var h = Handler;
+				if (h == null)
+					return;
+				var item = h.Source?.GetItem(Row);
+				int column = -1;
+				var args = new CellEventArgs(null, h.Widget, Row, column, item, CellStates.Editing, null);
+
+				natural_size = (int)h.Callback.OnGetPreferredWidth(h.Widget, args);
+			}
+
+			[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+			private delegate void RenderNativeDelegate(IntPtr inst, IntPtr cr, IntPtr widget, IntPtr background_area, IntPtr cell_area, int flags);
+
+			protected override unsafe void OnRender(Cairo.Context cr, Gtk.Widget widget, Gdk.Rectangle background_area, Gdk.Rectangle cell_area, Gtk.CellRendererState flags)
+			{
+#if GTKCORE
+				RenderNativeDelegate renderNativeDelegate = null;
+				IntPtr* ptr = (IntPtr*)((long)LookupGType().GetThresholdType().GetClassPtr() + class_abi.GetFieldOffset("render"));
+				if (*ptr != IntPtr.Zero)
+				{
+					renderNativeDelegate = (RenderNativeDelegate)Marshal.GetDelegateForFunctionPointer(*ptr, typeof(RenderNativeDelegate));
+					if (renderNativeDelegate != null)
+					{
+						IntPtr intPtr = GLib.Marshaller.StructureToPtrAlloc(background_area);
+						IntPtr intPtr2 = GLib.Marshaller.StructureToPtrAlloc(cell_area);
+						renderNativeDelegate(base.Handle, cr?.Handle ?? IntPtr.Zero, widget?.Handle ?? IntPtr.Zero, intPtr, intPtr2, (int)flags);
+						Marshal.FreeHGlobal(intPtr);
+						Marshal.FreeHGlobal(intPtr2);
+					}
+				}
+#endif
+
+				if (editingRow == row)
+				{
+					return;
+				}
+				using (var graphics = new Graphics(new GraphicsHandler(widget, cr)))
+				{
 					var item = Handler.Source.GetItem(Row);
 					var args = new CellPaintEventArgs(graphics, cell_area.ToEto(), flags.ToEto(), item);
 					Handler.Callback.OnPaint(Handler.Widget, args);
 				}
 			}
-			#else
-			protected override void OnGetPreferredHeight(Gtk.Widget widget, out int minimum_size, out int natural_size)
-			{
-				base.OnGetPreferredHeight(widget, out minimum_size, out natural_size);
-				natural_size = Handler.Source.RowHeight;
-			}
-			
-			protected override void OnRender (Cairo.Context cr, Gtk.Widget widget, Gdk.Rectangle background_area, Gdk.Rectangle cell_area, Gtk.CellRendererState flags)
-			{
-			}
-
 
 			protected override IGtkCellEditable OnStartEditing(Gdk.Event evnt, Gtk.Widget widget, string path, Gdk.Rectangle background_area, Gdk.Rectangle cell_area, Gtk.CellRendererState flags)
 			{
 				return CreateEditable(cell_area);
 			}
 
+			/*
 			protected override void OnEditingStarted(IGtkCellEditable editable, string path)
 			{
-				base.OnEditingStarted(editable, path);
-			}
-			#endif
+				//base.OnEditingStarted(editable, path);
+			}*/
+#endif
 		}
 
 

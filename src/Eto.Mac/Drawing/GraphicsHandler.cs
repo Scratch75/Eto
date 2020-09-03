@@ -85,6 +85,9 @@ namespace Eto.iOS.Drawing
 		readonly Stack<CGAffineTransform> transforms = new Stack<CGAffineTransform>();
 		CGAffineTransform currentTransform = CGAffineTransform.MakeIdentity();
 		static readonly CGColorSpace patternColorSpace = CGColorSpace.CreatePattern(null);
+		FormattedText _formattedText;
+
+		FormattedText SharedFormattedText => _formattedText ?? (_formattedText = new FormattedText());
 
 		public NSView DisplayView { get; private set; }
 
@@ -240,13 +243,13 @@ namespace Eto.iOS.Drawing
 			var handler = image.Handler as BitmapHandler;
 			SourceImage = image;
 #if OSX
-			var rep = handler.Control.Representations().OfType<NSBitmapImageRep>().FirstOrDefault();
+			var rep = handler.GetBitmapImageRep();
 			if (rep.BitsPerPixel != 32)
 			{
 				// CoreGraphics only supports drawing to 32bpp, create a new 32-bpp image and copy back when disposed or flushed.
 				DrawingImage = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppRgb);
 				handler = DrawingImage.Handler as BitmapHandler;
-				rep = handler.Control.Representations().OfType<NSBitmapImageRep>().FirstOrDefault();
+				rep = handler.GetBitmapImageRep();
 			}
 			graphicsContext = NSGraphicsContext.FromBitmap(rep);
 			if (graphicsContext == null)
@@ -254,7 +257,7 @@ namespace Eto.iOS.Drawing
 				// invalid parameters for the rep
 				DrawingImage = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppRgba);
 				handler = DrawingImage.Handler as BitmapHandler;
-				rep = handler.Control.Representations().OfType<NSBitmapImageRep>().FirstOrDefault();
+				rep = handler.GetBitmapImageRep();
 				graphicsContext = NSGraphicsContext.FromBitmap(rep);
 			}
 
@@ -591,25 +594,33 @@ namespace Eto.iOS.Drawing
 			EndDrawing();
 		}
 
-		public void DrawText(Font font, SolidBrush brush, float x, float y, string text)
+		public void DrawText(Font font, Brush brush, float x, float y, string text)
+		{
+			var formattedText = SharedFormattedText;
+			formattedText.Text = text;
+			formattedText.Font = font;
+			formattedText.ForegroundBrush = brush;
+			DrawText(formattedText, new PointF(x, y));
+		}
+
+		public void DrawText(FormattedText formattedText, PointF location)
 		{
 			SetOffset(true);
-			if (string.IsNullOrEmpty(text))
-				return;
-
 			StartDrawing();
-			FontExtensions.DrawString(text, new PointF(x, y), brush.Color, font);
+			if (formattedText.Handler is FormattedTextHandler handler)
+				handler.DrawText(this, location);
 			EndDrawing();
 		}
 
 		public SizeF MeasureString(Font font, string text)
 		{
-			StartDrawing();
-			var size = FontExtensions.MeasureString(text, font);
-			EndDrawing();
-			return size;
+			var formattedText = SharedFormattedText;
+			formattedText.Text = text;
+			formattedText.Font = font;
+			return formattedText.Measure();
 		}
-		#if OSX
+
+#if OSX
 		protected override void Dispose(bool disposing)
 		{
 			if (disposing)

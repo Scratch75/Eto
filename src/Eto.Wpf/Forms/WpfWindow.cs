@@ -27,6 +27,16 @@ namespace Eto.Wpf.Forms
 		void Validate();
 	}
 
+	static class WpfWindow
+	{
+		internal static readonly object MovableByWindowBackground_Key = new object();
+		internal static EventInfo dpiChangedEvent = typeof(sw.Window).GetEvent("DpiChanged");
+		internal static readonly object LastPixelSize_Key = new object();
+		internal static readonly object LocationSet_Key = new object();
+
+
+	}
+
 	public abstract class WpfWindow<TControl, TWidget, TCallback> : WpfPanel<TControl, TWidget, TCallback>, Window.IHandler, IWpfWindow, IInputBindingHost
 		where TControl : sw.Window
 		where TWidget : Window
@@ -59,11 +69,37 @@ namespace Eto.Wpf.Forms
 
 		public swc.DockPanel MainPanel { get { return main; } }
 
+		public bool MovableByWindowBackground
+		{
+			get => Widget.Properties.Get<bool>(WpfWindow.MovableByWindowBackground_Key);
+			set
+			{
+				if (Widget.Properties.TrySet(WpfWindow.MovableByWindowBackground_Key, value))
+				{
+					if (value)
+						content.MouseLeftButtonDown += Content_MouseLeftButtonDown;
+					else
+						content.MouseLeftButtonDown -= Content_MouseLeftButtonDown;
+				}
+			}
+		}
+
+		void Content_MouseLeftButtonDown(object sender, swi.MouseButtonEventArgs e)
+		{
+			// mouse could be captured by something else, so we release it here to ensure the DragMove works.
+			// we only get here if no control has handled the mouse down event.
+			swi.Mouse.Captured?.ReleaseMouseCapture();
+
+			Control.DragMove();
+			e.Handled = true;
+		}
+
 		protected override void Initialize()
 		{
 			if (IsAttached)
 				return;
 			content = new swc.DockPanel();
+			UseShellDropManager = true;
 
 			base.Initialize();
 			Control.SizeToContent = sw.SizeToContent.WidthAndHeight;
@@ -105,6 +141,25 @@ namespace Eto.Wpf.Forms
 			HandleEvent(Window.ClosingEvent);
 		}
 
+		public bool UseShellDropManager
+		{
+			get => Widget.Properties.Get<WpfShellDropBehavior>(typeof(WpfShellDropBehavior)) != null;
+			set
+			{
+				if (value != UseShellDropManager)
+				{
+					if (value)
+						Widget.Properties.TrySet(typeof(WpfShellDropBehavior), new WpfShellDropBehavior(Control));
+					else
+					{
+						var shellDrop = Widget.Properties.Get<WpfShellDropBehavior>(typeof(WpfShellDropBehavior));
+						shellDrop.Detatch();
+						Widget.Properties.Remove(typeof(WpfShellDropBehavior));
+					}
+				}
+			}
+		}
+
 		void SetupPerMonitorDpi()
 		{
 			if (EnablePerMonitorDpiSupport && dpiHelper == null && Win32.PerMonitorDpiSupported)
@@ -120,8 +175,6 @@ namespace Eto.Wpf.Forms
 		{
 			base.SetContentScale(true, true);
 		}
-
-		static EventInfo dpiChangedEvent = typeof(sw.Window).GetEvent("DpiChanged");
 
 		public override void AttachEvent(string id)
 		{
@@ -151,16 +204,24 @@ namespace Eto.Wpf.Forms
 					{
 						var args = new CancelEventArgs { Cancel = e.Cancel };
 						Callback.OnClosing(Widget, args);
-						if (!args.Cancel && sw.Application.Current.Windows.Count == 1)
+						var willShutDown =
+							(
+								sw.Application.Current.ShutdownMode == sw.ShutdownMode.OnLastWindowClose
+								&& sw.Application.Current.Windows.Count == 1
+							)
+							|| (
+								sw.Application.Current.ShutdownMode == sw.ShutdownMode.OnMainWindowClose
+								&& sw.Application.Current.MainWindow == Control
+							);
+
+						if (!args.Cancel && willShutDown)
 						{
 							// last window closing, so call OnTerminating to let the app abort terminating
 							var app = ((ApplicationHandler)Application.Instance.Handler);
 							app.Callback.OnTerminating(app.Widget, args);
 						}
 						e.Cancel = args.Cancel;
-						IsApplicationClosing = !args.Cancel
-							&& sw.Application.Current.MainWindow == Control
-							&& sw.Application.Current.ShutdownMode == sw.ShutdownMode.OnMainWindowClose;
+						IsApplicationClosing = !args.Cancel && willShutDown;
 					};
 					break;
 				case Window.WindowStateChangedEvent:
@@ -176,10 +237,10 @@ namespace Eto.Wpf.Forms
 					Control.LocationChanged += (sender, e) => Callback.OnLocationChanged(Widget, EventArgs.Empty);
 					break;
 				case Window.LogicalPixelSizeChangedEvent:
-					if (PerMonitorDpiHelper.BuiltInPerMonitorSupported && dpiChangedEvent != null) // .NET 4.6.2 support!
+					if (PerMonitorDpiHelper.BuiltInPerMonitorSupported && WpfWindow.dpiChangedEvent != null) // .NET 4.6.2 support!
 					{
 						var method = typeof(WpfWindow<TControl, TWidget, TCallback>).GetMethod(nameof(HandleLogicalPixelSizeChanged), BindingFlags.Instance | BindingFlags.NonPublic);
-						dpiChangedEvent.AddEventHandler(Control, Delegate.CreateDelegate(dpiChangedEvent.EventHandlerType, this, method));
+						WpfWindow.dpiChangedEvent.AddEventHandler(Control, Delegate.CreateDelegate(WpfWindow.dpiChangedEvent.EventHandlerType, this, method));
 						break;
 					}
 					SetupPerMonitorDpi();
@@ -192,12 +253,10 @@ namespace Eto.Wpf.Forms
 			}
 		}
 
-		static readonly object LastPixelSize_Key = new object();
-
 		float LastPixelSize
 		{
-			get => Widget.Properties.Get<float>(LastPixelSize_Key);
-			set => Widget.Properties.Set(LastPixelSize_Key, value);
+			get => Widget.Properties.Get<float>(WpfWindow.LastPixelSize_Key);
+			set => Widget.Properties.Set(WpfWindow.LastPixelSize_Key, value);
 		}
 
 		void HandleLogicalPixelSizeChanged(object sender, EventArgs e)
@@ -504,15 +563,13 @@ namespace Eto.Wpf.Forms
 		public string Title
 		{
 			get { return Control.Title; }
-			set { Control.Title = value; }
+			set { Control.Title = value ?? string.Empty; }
 		}
-
-		static readonly object LocationSet_Key = new object();
 
 		protected bool LocationSet
 		{
-			get { return Widget.Properties.Get<bool>(LocationSet_Key); }
-			set { Widget.Properties.Set(LocationSet_Key, value); }
+			get { return Widget.Properties.Get<bool>(WpfWindow.LocationSet_Key); }
+			set { Widget.Properties.Set(WpfWindow.LocationSet_Key, value); }
 		}
 
 		System.Windows.Forms.Screen SwfScreen
@@ -571,6 +628,7 @@ namespace Eto.Wpf.Forms
 				}
 				else
 				{
+					LocationSet = true;
 					SetLocation(value);
 				}
 			}
@@ -589,7 +647,7 @@ namespace Eto.Wpf.Forms
 			var handle = WindowHandle;
 			var loc = location.LogicalToScreen();
 
-			Win32.SetWindowPos(WindowHandle, IntPtr.Zero, loc.X, loc.Y, 0, 0, Win32.SWP.NOSIZE);
+			Win32.SetWindowPos(WindowHandle, IntPtr.Zero, loc.X, loc.Y, 0, 0, Win32.SWP.NOSIZE | Win32.SWP.NOACTIVATE);
 		}
 
 		public WindowState WindowState

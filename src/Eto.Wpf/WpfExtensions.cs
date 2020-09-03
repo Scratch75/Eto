@@ -9,6 +9,7 @@ using Eto.Wpf.Forms;
 using Eto.Forms;
 using System.Linq;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace Eto.Wpf
 {
@@ -32,6 +33,16 @@ namespace Eto.Wpf
 					return tmp;
 			}
 			return null;
+		}
+
+		public static IEnumerable<sw.DependencyObject> GetVisualParents(this sw.DependencyObject control)
+		{
+			while (control != null)
+			{
+				yield return control;
+
+				control = control.GetVisualParent<sw.DependencyObject>();
+			}
 		}
 
 		public static T GetParent<T>(this sw.FrameworkElement control)
@@ -319,7 +330,46 @@ namespace Eto.Wpf
 			// fix memory leak with RenderTargetBitmap.  See http://stackoverflow.com/questions/14786490/wpf-memory-leak-using-rendertargetbitmap
 			// Reproducible with the 
 			// GC.Collect alone seems to fix the issue.  Adding GC.WaitForPendingFinalizers may impact performance.
-			GC.Collect();
+			
+			// Note: this may no longer be an issue with the latest version of .NET after some testing, however
+			// we keep it here to keep memory in check, but instead make it non-blocking so it doesn't cause a huge
+			// performance penalty creating many Bitmaps with a Graphics object.
+			GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, false);
 		}
+
+
+		static Lazy<bool> s_SpellCheckCanBeEnabled = new Lazy<bool>(CheckIfSpellCheckCanBeEnabled);
+
+		public static bool SpellCheckCanBeEnabled => s_SpellCheckCanBeEnabled.Value;
+
+		private static bool CheckIfSpellCheckCanBeEnabled()
+		{
+			try
+			{
+				// check if we can create the spell checker com component
+				var spellCheckerFactory = new SpellCheckerFactoryCoClass();
+
+				if (Marshal.IsComObject(spellCheckerFactory))
+				{
+					Marshal.ReleaseComObject(spellCheckerFactory);
+					return true;
+				}
+				return false;
+			}
+			catch
+			{
+				// there was a problem!
+				return false;
+			}
+		}
+
+		[Guid("7AB36653-1796-484B-BDFA-E74F1DB7C1DC")]
+		[TypeLibType(TypeLibTypeFlags.FCanCreate)]
+		[ClassInterface(ClassInterfaceType.None)]
+		[ComImport]
+		private class SpellCheckerFactoryCoClass
+		{
+		}
+
 	}
 }

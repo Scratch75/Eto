@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
@@ -435,6 +436,17 @@ namespace Eto
 		}
 
 		/// <summary>
+		/// Gets or sets a value indicating that the platform should allow reinitialization.
+		/// </summary>
+		/// <remarks>
+		/// When false, prevents incorrect logic that may create multiple instances of <see cref="Forms.Application"/>
+		/// or <see cref="Platform"/> in the same thread which can causes issues where handlers are no longer registered, etc.
+		/// 
+		/// Multiple instances should still be able to be created in separate threads (for platforms that support it) when this is false.
+		/// </remarks>
+		public static bool AllowReinitialize { get; set; }
+
+		/// <summary>
 		/// Initializes the specified <paramref name="platform"/> as the current generator, for the current thread
 		/// </summary>
 		/// <remarks>
@@ -443,8 +455,17 @@ namespace Eto
 		/// <param name="platform">Generator to set as the current generator</param>
 		public static void Initialize(Platform platform)
 		{
+			if (!AllowReinitialize && instance.IsValueCreated && instance.Value != null && !ReferenceEquals(platform, instance.Value))
+				throw new InvalidOperationException("The Eto.Forms Platform is already initialized.");
+
 			if (globalInstance == null)
 				globalInstance = platform;
+
+			SetInstance(platform);
+		}
+
+		internal static void SetInstance(Platform platform)
+		{
 			instance.Value = platform;
 		}
 
@@ -527,6 +548,8 @@ namespace Eto
 			if (handler != null)
 				instantiatorMap[handler.Type] = instantiator; // for backward compatibility, for now
 			instantiatorMap[type] = instantiator;
+			// clear handler map so it can pick up the new instantiator next time it is created
+			handlerMap.Clear();
 		}
 
 		/// <summary>
@@ -535,10 +558,14 @@ namespace Eto
 		/// <param name="type">Type of the handler interface to get the instantiator for (usually derived from <see cref="Widget.IHandler"/> or another type)</param>
 		public Func<object> Find(Type type)
 		{
+			if (type == null)
+				throw new ArgumentNullException(nameof(type));
+
 			Func<object> activator;
 			if (instantiatorMap.TryGetValue(type, out activator))
 				return activator;
 
+			// the type is not mapped, try the type from the handler attribute
 			var handler = type.GetCustomAttribute<HandlerAttribute>(true);
 			if (handler != null && instantiatorMap.TryGetValue(handler.Type, out activator))
 			{
@@ -546,9 +573,20 @@ namespace Eto
 				return activator;
 			}
 
-			if (!loadedAssemblies.Contains(type.GetAssembly()))
+			// load the handler type assembly and try again (as type could be a derived class)
+			var handlerAssembly = handler?.Type.GetAssembly();
+			if (handlerAssembly != null && !loadedAssemblies.Contains(handlerAssembly))
 			{
-				LoadAssembly(type.GetAssembly());
+				LoadAssembly(handlerAssembly);
+				// since we recurse here it will fall to the next one if this fails.
+				return Find(type);
+			}
+
+			// finally, try the assembly of the current type if we still can't find it
+			var typeAssembly = type.GetAssembly();
+			if (!loadedAssemblies.Contains(typeAssembly))
+			{
+				LoadAssembly(typeAssembly);
 				return Find(type);
 			}
 
@@ -573,14 +611,24 @@ namespace Eto
 				return info;
 
 			var handler = type.GetCustomAttribute<HandlerAttribute>(true);
-			Func<object> activator;
-			if (handler != null && instantiatorMap.TryGetValue(handler.Type, out activator))
+			if (handler != null)
 			{
-				var autoInit = handler.Type.GetCustomAttribute<AutoInitializeAttribute>(true);
-				info = new HandlerInfo(autoInit == null || autoInit.Initialize, activator);
-				handlerMap.Add(type, info);
-				return info;
+				if (instantiatorMap.TryGetValue(handler.Type, out var activator))
+				{
+					var autoInit = handler.Type.GetCustomAttribute<AutoInitializeAttribute>(true);
+					info = new HandlerInfo(autoInit == null || autoInit.Initialize, activator);
+					handlerMap.Add(type, info);
+					return info;
+				}
+				// load the assembly of the handler type (needed when type is a subclass)
+				if (!loadedAssemblies.Contains(handler.Type.GetAssembly()))
+				{
+					LoadAssembly(handler.Type.GetAssembly());
+					return FindHandler(type);
+				}
 			}
+
+			// load the assembly of the target type (can be a subclass)
 			if (!loadedAssemblies.Contains(type.GetAssembly()))
 			{
 				LoadAssembly(type.GetAssembly());

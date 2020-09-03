@@ -54,12 +54,26 @@ namespace Eto.Mac.Drawing
 				NSImageRep.RegisterImageRepClass(new Class(typeof(LazyImageRep)));
 			}
 
+			static readonly IntPtr s_selAlloc_Handle = Selector.GetHandle("alloc");
+			static readonly IntPtr s_bitmapImageRepClass = Class.GetHandle(typeof(NSBitmapImageRep));
+			static readonly IntPtr selInitWithData_Handle = Selector.GetHandle("initWithData:");
+
 			public NSBitmapImageRep Rep
 			{
 				get {
 					if (rep != null)
 						return rep;
-					rep = new NSBitmapImageRep(NSData.FromStream(Load()));
+
+					// fatal flaw in Xamarin.Mac/MonoMac here, so we can't use this constructor directly
+					// see https://github.com/xamarin/xamarin-macios/issues/9478
+					var data = NSData.FromStream(Load());
+					var ptr = Messaging.IntPtr_objc_msgSend(s_bitmapImageRepClass, s_selAlloc_Handle);
+					ptr = Messaging.IntPtr_objc_msgSend_IntPtr(ptr, selInitWithData_Handle, data.Handle);
+					rep = Runtime.GetNSObject<NSBitmapImageRep>(ptr);
+
+					// should be this:
+					//rep = new NSBitmapImageRep(NSData.FromStream(Load()));
+					
 					rep.Size = new CGSize(rep.PixelsWide, rep.PixelsHigh); // ignore dpi from image
 					return rep;
 				}
@@ -142,8 +156,13 @@ namespace Eto.Mac.Drawing
 				return Rep.DrawAtPoint(point);
 			}
 
+			static NSDictionary s_emptyDictionary = new NSDictionary();
+
 			public override bool DrawInRect(CGRect dstSpacePortionRect, CGRect srcSpacePortionRect, NSCompositingOperation op, nfloat requestedAlpha, bool respectContextIsFlipped, NSDictionary hints)
 			{
+				// bug in Xamarin.Mac, hints can't be null when calling base..
+				hints = hints ?? s_emptyDictionary;
+
 				return Rep.DrawInRect(dstSpacePortionRect, srcSpacePortionRect, op, requestedAlpha, respectContextIsFlipped, hints);
 			}
 
@@ -155,7 +174,15 @@ namespace Eto.Mac.Drawing
 			[Export("copyWithZone:")]
 			public NSObject CopyWithZone(IntPtr zone)
 			{
-				return new LazyImageRep { rep = rep?.Copy() as NSBitmapImageRep, Load = Load };
+				var obj = new LazyImageRep {
+					rep = rep?.Copy() as NSBitmapImageRep,
+					pixelsHigh = pixelsHigh,
+					pixelsWide = pixelsWide,
+					size = size,
+					Load = Load
+				};
+				obj.DangerousRetain();
+				return obj;
 			}
 		}
 

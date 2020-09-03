@@ -83,12 +83,19 @@ namespace Eto.GtkSharp.Forms
 			{
 				Widget.Properties.Set(GtkPanel.MinimumSize_Key, value);
 				ContainerControl.QueueResize();
+				SetSize(UserPreferredSize);
 			}
 		}
 
 		protected override void SetSize(Size size)
 		{
-			base.SetSize(Size.Max(size, MinimumSize));
+			var min = MinimumSize;
+			if (min.Width > 0)
+				size.Width = Math.Max(size.Width, min.Width);
+			if (min.Height > 0)
+				size.Height = Math.Max(size.Height, min.Height);
+
+			base.SetSize(size);
 		}
 
 		public virtual Padding Padding

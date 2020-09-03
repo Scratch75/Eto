@@ -11,6 +11,10 @@ namespace Eto.Wpf.Forms
 		public class EtoWindow : sw.Window
 		{
 
+			public EtoWindow()
+			{
+				AllowDrop = true;
+			}
 
 			protected override void OnActivated(EventArgs e)
 			{
@@ -40,7 +44,7 @@ namespace Eto.Wpf.Forms
 			Control = new EtoWindow();
 		}
 
-		public void Show()
+		public virtual void Show()
 		{
 			Control.WindowStartupLocation = sw.WindowStartupLocation.Manual;
 			if (ApplicationHandler.Instance.IsStarted)

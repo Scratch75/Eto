@@ -85,6 +85,7 @@ namespace Eto.Mac.Forms.Controls
 		public static readonly object IsEditing_Key = new object();
 		public static readonly object IsMouseDragging_Key = new object();
 		public static readonly object ContextMenu_Key = new object();
+		public static readonly object IsCancelEdit_Key = new object();
 	}
 
 	class EtoTableHeaderView : NSTableHeaderView
@@ -156,6 +157,19 @@ namespace Eto.Mac.Forms.Controls
 		}
 	}
 
+	class GridDragInfo
+	{
+		public NSDragOperation AllowedOperation { get; set; }
+		public NSImage DragImage { get; set; }
+		public PointF ImageOffset { get; set; }
+
+		public CGPoint GetDragImageOffset()
+		{
+			var size = DragImage.Size;
+			return new CGPoint(size.Width / 2 - ImageOffset.X, ImageOffset.Y - size.Height / 2);
+		}
+	}
+
 	public abstract class GridHandler<TControl, TWidget, TCallback> : MacControl<TControl, TWidget, TCallback>, Grid.IHandler, IDataViewHandler, IGridHandler
 		where TControl : NSTableView
 		where TWidget : Grid
@@ -164,6 +178,12 @@ namespace Eto.Mac.Forms.Controls
 		ColumnCollection columns;
 
 		public override NSView DragControl => Control;
+
+		public bool AllowEmptySelection
+		{
+			get => Control.AllowsEmptySelection;
+			set => Control.AllowsEmptySelection = value;
+		}
 
 		protected int SuppressUpdate { get; set; }
 
@@ -193,6 +213,8 @@ namespace Eto.Mac.Forms.Controls
 
 		public GridColumnHandler GetColumn(NSTableColumn tableColumn)
 		{
+			if (tableColumn == null)
+				return null;
 			var str = tableColumn.Identifier;
 			if (!string.IsNullOrEmpty(str))
 			{
@@ -453,7 +475,10 @@ namespace Eto.Mac.Forms.Controls
 
 		public void BeginEdit(int row, int column)
 		{
-			Control.SelectRow((nnint)row, false);
+			if (!Control.IsRowSelected(row))
+			{
+				Control.SelectRow((nnint)row, false);
+			}
 			Control.EditColumn((nint)column, (nint)row, new NSEvent(), true);
 		}
 
@@ -461,10 +486,16 @@ namespace Eto.Mac.Forms.Controls
 
 		public bool CancelEdit()
 		{
-			SuppressUpdate++;
-			var ret = SetFocusToControl();
-			SuppressUpdate--;
-			return ret;
+			if (IsEditing)
+			{
+				SuppressUpdate++;
+				IsCancellingEdit = true;
+				var ret = SetFocusToControl();
+				IsCancellingEdit = false;
+				SuppressUpdate--;
+				return ret;
+			}
+			return true;
 		}
 
 		bool SetFocusToControl()
@@ -490,10 +521,7 @@ namespace Eto.Mac.Forms.Controls
 
 		public abstract object GetItem(int row);
 
-		public virtual int RowCount
-		{
-			get { return (int)Control.RowCount; }
-		}
+		public virtual int RowCount => (int)Control.RowCount;
 
 		protected override bool ControlEnabled
 		{
@@ -540,10 +568,7 @@ namespace Eto.Mac.Forms.Controls
 				Widget.Properties[GridHandler.ScrolledToRow_Key] = true;
 		}
 
-		public bool Loaded
-		{
-			get { return Widget.Loaded; }
-		}
+		public bool Loaded => Widget.Loaded;
 
 		public GridLines GridLines
 		{
@@ -573,17 +598,31 @@ namespace Eto.Mac.Forms.Controls
 			SetIsEditing(true);
 		}
 
+		public bool IsCancellingEdit
+		{
+			get => Widget.Properties.Get<bool>(GridHandler.IsCancelEdit_Key);
+			set => Widget.Properties.Set(GridHandler.IsCancelEdit_Key, value);
+		}
+
 		void IDataViewHandler.OnCellEdited(GridViewCellEventArgs e)
 		{
 			SetIsEditing(false);
-			if (e.Item != null)
+			if (e.Item != null && !IsCancellingEdit)
 				Callback.OnCellEdited(Widget, e);
+
+			// reload this entire row
+			if (e.Row >= 0)
+			{
+				Control.ReloadData(NSIndexSet.FromIndex((nnint)e.Row), NSIndexSet.FromNSRange(new NSRange(0, Control.ColumnCount)));
+			}
+
+			if (e.GridColumn.AutoSize)
+			{
+				AutoSizeColumns(true);
+			}
 		}
 
-		Grid IDataViewHandler.Widget
-		{
-			get { return Widget; }
-		}
+		Grid IDataViewHandler.Widget => Widget;
 
 		protected void SetIsEditing(bool value) => Widget.Properties.Set(GridHandler.IsEditing_Key, value, false);
 

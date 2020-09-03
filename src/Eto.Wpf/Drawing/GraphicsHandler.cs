@@ -300,14 +300,25 @@ namespace Eto.Wpf.Drawing
             Control.Pop();
         }
 
-		public void DrawText(Font font, SolidBrush b, float x, float y, string text)
+		public void DrawText(FormattedText formattedText, PointF location)
+		{
+			SetOffset(true);
+			if (formattedText.Handler is FormattedTextHandler handler)
+			{
+				handler.DrawText(this, location);
+			}
+		}
+
+		public void DrawText(Font font, Brush b, float x, float y, string text)
 		{
 			SetOffset(true);
 			var fontHandler = font.Handler as FontHandler;
 			if (fontHandler != null)
 			{
 				var brush = b.ToWpf();
-				var formattedText = new swm.FormattedText(text, CultureInfo.CurrentUICulture, sw.FlowDirection.LeftToRight, fontHandler.WpfTypeface, fontHandler.PixelSize, brush);
+#pragma warning disable CS0618 // 'FormattedText.FormattedText(string, CultureInfo, FlowDirection, Typeface, double, Brush)' is obsolete: 'Use the PixelsPerDip override'
+				var formattedText = new swm.FormattedText(text, CultureInfo.CurrentUICulture, sw.FlowDirection.LeftToRight, fontHandler.WpfTypeface, fontHandler.WpfSize, brush);
+#pragma warning restore CS0618 // Type or member is obsolete
 				if (fontHandler.WpfTextDecorationsFrozen != null)
 					formattedText.SetTextDecorations(fontHandler.WpfTextDecorationsFrozen, 0, text.Length);
 				Control.DrawText(formattedText, new sw.Point(x, y));
@@ -322,7 +333,9 @@ namespace Eto.Wpf.Drawing
 			if (fontHandler != null)
 			{
 				var brush = new swm.SolidColorBrush(swm.Colors.White);
-				var formattedText = new swm.FormattedText(text, CultureInfo.CurrentUICulture, sw.FlowDirection.LeftToRight, fontHandler.WpfTypeface, fontHandler.PixelSize, brush);
+#pragma warning disable CS0618 // 'FormattedText.FormattedText(string, CultureInfo, FlowDirection, Typeface, double, Brush)' is obsolete: 'Use the PixelsPerDip override'
+				var formattedText = new swm.FormattedText(text, CultureInfo.CurrentUICulture, sw.FlowDirection.LeftToRight, fontHandler.WpfTypeface, fontHandler.WpfSize, brush);
+#pragma warning restore CS0618 // Type or member is obsolete
 				result = new SizeF((float)formattedText.WidthIncludingTrailingWhitespace, (float)formattedText.Height);
 			}
 
@@ -337,7 +350,7 @@ namespace Eto.Wpf.Drawing
 			}
 		}
 
-		bool Close()
+		unsafe bool Close()
 		{
 			CloseGroup();
 			if (image != null)
@@ -347,7 +360,23 @@ namespace Eto.Wpf.Drawing
 				var bmp = image.ToWpf();
 				var newbmp = new swmi.RenderTargetBitmap(bmp.PixelWidth, bmp.PixelHeight, bmp.DpiX, bmp.DpiY, swm.PixelFormats.Pbgra32);
 				newbmp.RenderWithCollect(visual);
-				handler.SetBitmap(newbmp);
+				if (!bmp.Format.HasAlpha())
+				{
+					// convert to non-alpha, as RenderTargetBitmap does not support anything other than Pbgra32
+					var wb = new swmi.WriteableBitmap(bmp.PixelWidth, bmp.PixelHeight, bmp.DpiX, bmp.DpiY, swm.PixelFormats.Bgr32, null);
+					var rect = new sw.Int32Rect(0, 0, bmp.PixelWidth, bmp.PixelHeight);
+					var pixels = new byte[bmp.PixelHeight * wb.BackBufferStride];
+					newbmp.CopyPixels(rect, pixels, wb.BackBufferStride, 0);
+					fixed (byte* ptr = pixels)
+					{
+						wb.WritePixels(rect, (IntPtr)ptr, pixels.Length, wb.BackBufferStride, 0, 0);
+					}
+					handler.SetBitmap(wb);
+				}
+				else
+				{
+					handler.SetBitmap(newbmp);
+				}
 				return true;
 			}
 			return false;

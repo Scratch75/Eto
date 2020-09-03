@@ -35,7 +35,15 @@ namespace Eto.Forms
 		/// <summary>
 		/// Window with no border
 		/// </summary>
-		None
+		None,
+		/// <summary>
+		/// Utility window, usually with a smaller border
+		/// </summary>
+		/// <remarks>
+		/// Note that this is only a hint; some platforms may show it as a default window.
+		/// E.g. on macOS, only a <see cref="FloatingForm"/> supports this mode.
+		/// </remarks>
+		Utility
 	}
 
 	/// <summary>
@@ -300,6 +308,9 @@ namespace Eto.Forms
 		/// </remarks>
 		public virtual void Close()
 		{
+			// if we're already disposed, don't bother crashing.
+			if (IsDisposed)
+				return;
 			Handler.Close();
 		}
 
@@ -317,13 +328,14 @@ namespace Eto.Forms
 		/// <value>The owner of this window.</value>
 		public Window Owner
 		{
-			get { return Properties.Get<Window>(OwnerKey); }
-			set {
-				Properties.Set(OwnerKey, value, () =>
+			get => Properties.Get<Window>(OwnerKey);
+			set
+			{
+				if (Properties.TrySet(OwnerKey, value))
 				{
 					Handler.SetOwner(value);
 					OnOwnerChanged(EventArgs.Empty);
-				});
+				};
 			}
 		}
 
@@ -540,9 +552,15 @@ namespace Eto.Forms
 		/// Use the <see cref="LogicalPixelSizeChanged"/> to detect when the window is moved to 
 		/// a display with a different DPI.
 		/// </remarks>
-		public float LogicalPixelSize
+		public float LogicalPixelSize => Handler.LogicalPixelSize;
+
+		/// <summary>
+		/// Gets or sets a value indicating that the window can be moved by click+dragging the window background
+		/// </summary>
+		public bool MovableByWindowBackground
 		{
-			get { return Handler.LogicalPixelSize; }
+			get => Handler.MovableByWindowBackground;
+			set => Handler.MovableByWindowBackground = value;
 		}
 
 		#region Callback
@@ -800,6 +818,11 @@ namespace Eto.Forms
 			/// a display with a different DPI.
 			/// </remarks>
 			float LogicalPixelSize { get; }
+
+			/// <summary>
+			/// Gets or sets a value indicating that the window can be moved by click+dragging the window background
+			/// </summary>
+			bool MovableByWindowBackground { get; set; }
 		}
 
 		#endregion

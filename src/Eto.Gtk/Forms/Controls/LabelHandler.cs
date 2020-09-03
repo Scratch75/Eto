@@ -95,13 +95,20 @@ namespace Eto.GtkSharp.Forms.Controls
 				// label should allow shrinking, natural width is used instead
 				minimum_width = 0;
 			}
+
+			protected override void OnGetPreferredHeightForWidth(int width, out int minimum_height, out int natural_height)
+			{
+				if (width == 0)
+					width = int.MaxValue;
+				base.OnGetPreferredHeightForWidth(width, out minimum_height, out natural_height);
+			}
 #endif
 
 		}
 
 		public LabelHandler()
 		{
-			eventBox = new Gtk.EventBox();
+			eventBox = new EtoEventBox { Handler = this };
 #if GTK2
 			eventBox.ResizeMode = Gtk.ResizeMode.Immediate;
 #endif

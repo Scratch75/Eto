@@ -6,6 +6,7 @@ namespace Eto.Wpf.Forms.Cells
 {
 	public interface ICellContainerHandler
 	{
+		Grid Grid { get; }
 		sw.FrameworkElement SetupCell(ICellHandler cell, sw.FrameworkElement defaultContent);
 		void FormatCell(ICellHandler cell, sw.FrameworkElement element, swc.DataGridCell datacell, object dataItem);
 		void CellEdited(ICellHandler cell, sw.FrameworkElement element);
@@ -15,6 +16,8 @@ namespace Eto.Wpf.Forms.Cells
 	{
 		ICellContainerHandler ContainerHandler { get; set; }
 		swc.DataGridColumn Control { get; }
+		void OnMouseDown(GridCellMouseEventArgs args, sw.DependencyObject hitTestResult, swc.DataGridCell cell);
+		void OnMouseUp(GridCellMouseEventArgs args, sw.DependencyObject hitTestResult, swc.DataGridCell cell);
 	}
 
 	static class CellProperties
@@ -44,6 +47,30 @@ namespace Eto.Wpf.Forms.Cells
 		public sw.FrameworkElement SetupCell(sw.FrameworkElement defaultContent)
 		{
 			return ContainerHandler != null ? ContainerHandler.SetupCell(this, defaultContent) : defaultContent;
+		}
+
+		protected static T GetControl<T>(swc.DataGridCell cell)
+			where T: sw.DependencyObject
+		{
+			if (cell == null)
+				return null;
+
+			var content = cell.Content;
+			if (content is T ctl)
+				return ctl;
+
+			if (content is sw.DependencyObject dp)
+				return dp.FindChild<T>();
+
+			return null;
+		}
+
+		public virtual void OnMouseDown(GridCellMouseEventArgs args, sw.DependencyObject hitTestResult, swc.DataGridCell cell)
+		{
+		}
+
+		public virtual void OnMouseUp(GridCellMouseEventArgs args, sw.DependencyObject hitTestResult, swc.DataGridCell cell)
+		{
 		}
 	}
 }

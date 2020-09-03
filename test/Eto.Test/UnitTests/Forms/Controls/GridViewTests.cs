@@ -7,12 +7,142 @@ using Eto.Drawing;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Threading;
 
 namespace Eto.Test.UnitTests.Forms.Controls
 {
-	[TestFixture]
-	public class GridViewTests : TestBase
+	public abstract class GridTests<T> : TestBase
+		where T: Grid, new()
 	{
+		class GridTestItem : TreeGridItem
+		{
+			public string Text { get; set; }
+		}
+
+		[Test, ManualTest]
+		public void BeginEditShoudWorkOnCustomCells()
+		{
+			ManualForm("The custom cell should go in edit mode when clicking the BeginEdit button", form =>
+			{
+				var grid = new T();
+				grid.ShowHeader = true;
+				grid.AllowMultipleSelection = true;
+
+				string CellInfo(GridViewCellEventArgs e) => $"Row: {e.Row}, Column: {e.Column}";
+				string CellEditInfo(CellEventArgs e) => $"Row: {e.Row}";
+				void AddLogging(CustomCell cell)
+				{
+					cell.BeginEdit += (sender, e) => Log.Write(sender, $"BeginEdit {CellEditInfo(e)}, Grid.IsEditing: {grid.IsEditing}");
+					cell.CommitEdit += (sender, e) => Log.Write(sender, $"CommitEdit {CellEditInfo(e)}, Grid.IsEditing: {grid.IsEditing}");
+					cell.CancelEdit += (sender, e) => Log.Write(sender, $"CancelEdit {CellEditInfo(e)}, Grid.IsEditing: {grid.IsEditing}");
+
+					if (!CustomCell.SupportsControlView)
+					{
+						cell.GetPreferredWidth = args => 100;
+						cell.Paint += (sender, e) => {
+							e.Graphics.DrawText(SystemFonts.Default(), Brushes.Black, e.ClipRectangle, "Cell", alignment: FormattedTextAlignment.Center);
+						};
+					}
+
+				}
+
+				grid.CellEditing += (sender, e) => Log.Write(sender, $"CellEditing {CellInfo(e)}, Grid.IsEditing: {grid.IsEditing}");
+				grid.CellEdited += (sender, e) => Log.Write(sender, $"CellEdited {CellInfo(e)}, Grid.IsEditing: {grid.IsEditing}");
+				var customCell = new CustomCell();
+				customCell.CreateCell = args =>
+				{
+					var textBox = new TextBox { ShowBorder = false, BackgroundColor = Colors.Transparent };
+
+					if (!Platform.Instance.IsMac)
+					{
+						textBox.GotFocus += (sender, e) => textBox.BackgroundColor = SystemColors.ControlBackground;
+						textBox.LostFocus += (sender, e) => textBox.BackgroundColor = Colors.Transparent;
+
+						// ugly, there should be a better way to do this..
+						var colorBinding = textBox.Bind(c => c.TextColor, args, Binding.Property((CellEventArgs a) => a.CellTextColor).Convert(c => args.IsEditing ? SystemColors.ControlText : c));
+						args.PropertyChanged += (sender, e) => {
+							if (e.PropertyName == nameof(CellEventArgs.IsEditing))
+								colorBinding.Update();
+						};
+					}
+					else
+					{
+						// macOS handles colors more automaticcally for a TextBox
+					}
+
+					textBox.TextBinding.BindDataContext((GridTestItem i) => i.Text);
+
+					return textBox;
+				};
+				AddLogging(customCell);
+				grid.Columns.Add(new GridColumn { DataCell = customCell, Editable = true, HeaderText = "CustomTextBox" });
+
+				var customCell2 = new CustomCell();
+				customCell2.CreateCell = args =>
+				{
+					var dropDown = new DropDown { Items = { "Item 1", "Item 2", "Item 3" }};
+
+					return dropDown;
+				};
+				AddLogging(customCell2);
+				grid.Columns.Add(new GridColumn { DataCell = customCell2, Editable = true, HeaderText = "CustomDropDown" });
+
+				var customCell3 = new CustomCell();
+				customCell3.CreateCell = args =>
+				{
+					var checkBox = new CheckBox();
+
+					return checkBox;
+				};
+				AddLogging(customCell3);
+				grid.Columns.Add(new GridColumn { DataCell = customCell3, Editable = true, HeaderText = "CustomCheckBox" });
+
+				grid.Columns.Add(new GridColumn { DataCell = new TextBoxCell(nameof(GridTestItem.Text)), HeaderText = "TextBoxCell", Editable = true });
+
+				var list = new List<GridTestItem>();
+				list.Add(new GridTestItem { Text = "Item 1" });
+				list.Add(new GridTestItem { Text = "Item 2" });
+				list.Add(new GridTestItem { Text = "Item 3" });
+				SetDataStore(grid, list);
+
+				// using MouseDown so the buttons don't get focus
+				var beginEditButton = new Button { Text = "BeginEdit" };
+				beginEditButton.MouseDown += (sender, e) => {
+					grid.BeginEdit(1, 0);
+					e.Handled = true;
+				};
+
+				var commitEditButton = new Button { Text = "CommitEdit" };
+				commitEditButton.MouseDown += (sender, e) => {
+					grid.CommitEdit();
+					e.Handled = true;
+				};
+
+				var cancelEditButton = new Button { Text = "CancelEdit" };
+				cancelEditButton.MouseDown += (sender, e) => {
+					grid.CancelEdit();
+					e.Handled = true;
+				};
+
+				return new TableLayout(
+					TableLayout.Horizontal(4, beginEditButton, commitEditButton, cancelEditButton, null),
+					grid
+					);
+			});
+		}
+
+		protected abstract void SetDataStore(T grid, IEnumerable<object> dataStore);
+	}
+
+	[TestFixture]
+	public class GridViewTests : GridTests<GridView>
+	{
+		protected override void SetDataStore(GridView grid, IEnumerable<object> dataStore)
+		{
+			grid.DataStore = dataStore;
+		}
+
 		[Test, ManualTest]
 		public void CellClickShouldHaveMouseInformation()
 		{
@@ -180,6 +310,132 @@ namespace Eto.Test.UnitTests.Forms.Controls
 				layout.AddSeparateRow("Text:", textBox);
 
 				return layout;
+			});
+		}
+
+
+		class CustomCellWithTableLayout : CustomCell
+		{
+			protected override Control OnCreateCell(CellEventArgs args)
+			{
+				var label = new Label { Text = "Hello" };
+				
+				var button = new Button { MinimumSize = Size.Empty, Text = "..." };
+				button.Bind(c => c.Visible, args, a => a.IsSelected); // kaboom when reloading!
+
+				return new TableLayout
+				{
+					Rows = { new TableRow(new TableCell(label, true), button) }
+				};
+			}
+		}
+
+		[Test]
+		public void ReloadingDataStoreShouldNotCrash()
+		{
+			Form f = null;
+			GridView g = null;
+			try
+			{
+				Application.Instance.Invoke(() =>
+				{
+					f = new Form { Size = new Size(300, 300) };
+
+					g = new GridView();
+					g.Columns.Add(new GridColumn
+					{
+						DataCell = new CustomCellWithTableLayout()
+					});
+					g.DataStore = Enumerable.Range(0, 100).Cast<object>().ToList();
+					g.SelectedRow = 1;
+					f.Content = g;
+					f.Show();
+				});
+
+				Thread.Sleep(1000);
+
+				Application.Instance.Invoke(() =>
+				{
+					g.DataStore = Enumerable.Range(0, 10).Cast<object>().ToList();
+				});
+
+				Thread.Sleep(1000);
+			}
+			finally
+			{
+				Application.Instance.Invoke(() => f?.Close());
+			}
+		}
+
+		[TestCase(true, true)]
+		[TestCase(true, false)]
+		[TestCase(false, true)]
+		[TestCase(false, false)]
+		public void ClickingWithEmptyDataShouldNotCrash(bool allowEmptySelection, bool allowMultipleSelection)
+		{
+			Exception exception = null;
+			Form(form =>
+			{
+				var dd = new List<GridItem>();
+
+				dd.Add(new GridItem { Values = new[] { "Hello" } });
+				var control = new GridView();
+				control.AllowEmptySelection = allowEmptySelection;
+				control.AllowMultipleSelection = allowMultipleSelection;
+				control.Columns.Add(new GridColumn
+				{
+					DataCell = new TextBoxCell(0),
+					Width = 100,
+					HeaderText = "Text Cell"
+				});
+				control.DataStore = dd;
+				Application.Instance.AsyncInvoke(() => {
+					// can crash when had selection initially but no selection after.
+					try
+					{
+						control.DataStore = new List<GridItem>();
+					}
+					catch (Exception ex)
+					{
+						exception = ex;
+					}
+					Application.Instance.AsyncInvoke(form.Close);
+				});
+
+				form.Content = control;
+			});
+
+			if (exception != null)
+				ExceptionDispatchInfo.Capture(exception).Throw();
+		}
+
+		[Test, ManualTest]
+		public void SettingWidthShouldDisableAutosize()
+		{
+			ManualForm("Width of column should be 300px and not change when scrolling",
+			form => {
+				var control = new GridView();
+				control.Width = 400;
+				control.Height = 200;
+				var column = new GridColumn
+				{
+					DataCell = new TextBoxCell(0),
+					AutoSize = true,
+					Width = 300, // setting width should set AutoSize to false
+					HeaderText = "Cell"
+				};
+				control.Columns.Add(column);
+
+				Assert.IsFalse(column.AutoSize, "#1");
+
+				var dd = new List<GridItem>();
+				for (int i = 0; i < 1000; i++)
+				{
+					dd.Add(new GridItem { Values = new[] { "Row " + i } });
+				}
+				control.DataStore = dd;
+
+				return control;
 			});
 		}
 	}

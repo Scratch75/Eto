@@ -400,6 +400,24 @@ namespace Eto.WinForms.Forms
 			}
 		}
 
+		public virtual int Width
+		{
+			get => Size.Width;
+			set
+			{
+				throw new NotImplementedException();
+			}
+		}
+
+		public virtual int Height
+		{
+			get => Size.Height;
+			set
+			{
+				throw new NotImplementedException();
+			}
+		}
+
 		public bool Enabled
 		{
 			get
@@ -579,7 +597,9 @@ namespace Eto.WinForms.Forms
 			}
 		}
 
-		public void DoDragDrop(DataObject data, DragEffects allowedAction)
+		public bool MovableByWindowBackground { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
+
+		public void DoDragDrop(DataObject data, DragEffects allowedAction, Image image, PointF offset)
 		{
 			throw new NotImplementedException();
 		}
@@ -587,6 +607,20 @@ namespace Eto.WinForms.Forms
 		public Window GetNativeParentWindow()
 		{
 			throw new NotImplementedException();
+		}
+
+		public override void AttachEvent(string id)
+		{
+			switch (id)
+			{
+				case Window.LogicalPixelSizeChangedEvent:
+					// don't spam the output with warnings for this, many controls use it internally
+					break;
+				default:
+					base.AttachEvent(id);
+					break;
+			}
+
 		}
 	}
 }

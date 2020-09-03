@@ -49,8 +49,11 @@ namespace Eto.Mac.Forms.Controls
 
 			public override void Layout()
 			{
+				if (MacView.NewLayout)
+					base.Layout();
 				Handler?.PerformLayout();
-				base.Layout();
+				if (!MacView.NewLayout)
+					base.Layout();
 			}
 		}
 
@@ -59,7 +62,7 @@ namespace Eto.Mac.Forms.Controls
 		public bool EnableAnimation
 		{
 			get { return Widget.Properties.Get<bool>(EnableAnimation_Key, true); }
-			set { Widget.Properties.Set(EnableAnimation_Key, value); }
+			set { Widget.Properties.Set(EnableAnimation_Key, value, true); }
 		}
 
 		static readonly object AnimationDuration_Key = new object();
